@@ -2,10 +2,16 @@
 import Foundation
 
 protocol NetRunner {
+    var decoder: JSONDecoder { get }
     func execute<T: Decodable>(request: NetworkRequest) async throws -> T
 }
 
 extension NetRunner {
+    
+    var decoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        return decoder
+    }
     
     func execute<T: Decodable>(request: NetworkRequest) async throws -> T {
         let urlRequest = try makeURLRequest(from: request)
@@ -27,7 +33,7 @@ extension NetRunner {
     }
     
     private func decodeData<T: Decodable>(_ data: Data) throws -> T {
-        let decoded = try JSONDecoder().decode(T.self, from: data)
+        let decoded = try decoder.decode(T.self, from: data)
         return decoded
     }
     
