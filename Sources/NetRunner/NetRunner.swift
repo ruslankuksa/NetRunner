@@ -1,7 +1,7 @@
 
 import Foundation
 
-protocol NetRunner {
+public protocol NetRunner {
     var decoder: JSONDecoder { get }
     func execute<T: Decodable>(request: NetworkRequest) async throws -> T
 }
@@ -32,8 +32,12 @@ extension NetRunner {
     }
     
     private func decodeData<T: Decodable>(_ data: Data) throws -> T {
-        let decoded = try decoder.decode(T.self, from: data)
-        return decoded
+        do {
+            let response = try decoder.decode(T.self, from: data)
+            return response
+        } catch {
+            throw NetworkError.unableToDecodeResponse
+        }
     }
 }
 

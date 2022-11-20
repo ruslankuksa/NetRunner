@@ -13,17 +13,17 @@ extension URLRequest {
     }
 }
 
-protocol URLRequestConvertible {
+public protocol URLRequestConvertible {
     func convertToURLRequest() throws -> URLRequest
     func convertToURLRequest(with parameters: Parameters?) throws -> URLRequest
     func convertToURLRequest<Parameters: Encodable>(_ parameters: Parameters, encoder: JSONEncoder) throws -> URLRequest
 }
 
-protocol Endpoint {
+public protocol Endpoint {
     var path: String { get }
 }
 
-protocol NetworkRequest: URLRequestConvertible {
+public protocol NetworkRequest: URLRequestConvertible {
     var url: String { get }
     var method: HTTPMethod { get }
     var endpoint: Endpoint { get }
