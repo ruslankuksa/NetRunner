@@ -3,10 +3,10 @@ import Foundation
 
 public protocol NetRunner {
     var decoder: JSONDecoder { get }
-    func execute<T: Decodable>(request: NetworkRequest) async throws -> T
+    func execute<T: Decodable>(request: URLRequest) async throws -> T
 }
 
-extension NetRunner {
+public extension NetRunner {
     
     var decoder: JSONDecoder {
         let decoder = JSONDecoder()

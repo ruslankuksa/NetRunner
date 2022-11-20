@@ -30,7 +30,7 @@ public protocol NetworkRequest: URLRequestConvertible {
     var headers: HTTPHeaders? { get set }
 }
 
-extension NetworkRequest {
+public extension NetworkRequest {
     
     var urlPath: String {
         return [url, endpoint.path].joined()
