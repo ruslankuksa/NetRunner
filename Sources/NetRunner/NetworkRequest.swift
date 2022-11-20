@@ -14,9 +14,9 @@ extension URLRequest {
 }
 
 protocol URLRequestConvertible {
-    func makeURLRequest() throws -> URLRequest
-    func makeURLRequest(with parameters: Parameters?) throws -> URLRequest
-    func makeURLRequest<Parameters: Encodable>(_ parameters: Parameters, encoder: JSONEncoder) throws -> URLRequest
+    func convertToURLRequest() throws -> URLRequest
+    func convertToURLRequest(with parameters: Parameters?) throws -> URLRequest
+    func convertToURLRequest<Parameters: Encodable>(_ parameters: Parameters, encoder: JSONEncoder) throws -> URLRequest
 }
 
 protocol Endpoint {
@@ -36,7 +36,7 @@ extension NetworkRequest {
         return [url, endpoint.path].joined()
     }
     
-    func makeURLRequest() throws -> URLRequest {
+    func convertToURLRequest() throws -> URLRequest {
         guard let url = URL(string: urlPath) else {
             throw NetworkError.badURL
         }
@@ -44,8 +44,8 @@ extension NetworkRequest {
         return URLRequest(url: url, httpMethod: method, headers: headers)
     }
     
-    func makeURLRequest<Parameters: Encodable>(_ parameters: Parameters, encoder: JSONEncoder = .init()) throws -> URLRequest {
-        var request = try makeURLRequest()
+    func convertToURLRequest<Parameters: Encodable>(_ parameters: Parameters, encoder: JSONEncoder = .init()) throws -> URLRequest {
+        var request = try convertToURLRequest()
         let httpBody = try encoder.encode(parameters)
         request.httpBody = httpBody
         
@@ -56,9 +56,9 @@ extension NetworkRequest {
         return request
     }
     
-    func makeURLRequest(with parameters: Parameters?) throws -> URLRequest {
+    func convertToURLRequest(with parameters: Parameters?) throws -> URLRequest {
         guard let parameters = parameters, !parameters.isEmpty else {
-            return try makeURLRequest()
+            return try convertToURLRequest()
         }
         
         var components = URLComponents(string: urlPath)
@@ -68,7 +68,7 @@ extension NetworkRequest {
         }
         components?.queryItems = queryItems
         
-        var urlRequest = try makeURLRequest()
+        var urlRequest = try convertToURLRequest()
         urlRequest.url = components?.url
         
         return urlRequest
