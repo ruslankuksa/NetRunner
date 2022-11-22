@@ -6,6 +6,7 @@ enum NetworkError: LocalizedError {
     case badRequest(String)
     case badResponse
     case unableToDecodeResponse
+    case notAllowedRequest
     
     var errorDescription: String? {
         switch self {
@@ -17,6 +18,8 @@ enum NetworkError: LocalizedError {
             return "Invalid response."
         case .unableToDecodeResponse:
             return "Unable to decode received data."
+        case .notAllowedRequest:
+            return "HTTP Body is not allowed in GET request"
         }
     }
 }
