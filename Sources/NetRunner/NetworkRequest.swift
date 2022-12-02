@@ -10,22 +10,24 @@ public protocol NetworkRequest {
     var endpoint: Endpoint { get }
     var headers: HTTPHeaders? { get set }
     var parameters: Parameters? { get }
-    var body: Encodable? { get }
+    var httpBody: Encodable? { get }
     
     var decoder: JSONDecoder { get }
     var encoder: JSONEncoder { get }
-    
-    init(method: HTTPMethod, endpoint: Endpoint, parameters: Parameters?, decoder: JSONDecoder)
-    init(method: HTTPMethod, endpoint: Endpoint, body: Encodable?, encoder: JSONEncoder, decoder: JSONDecoder)
 }
 
 public extension NetworkRequest {
     
-    private var urlPath: String {
-        return [url, endpoint.path].joined()
+    var decoder: JSONDecoder {
+        return .init()
+    }
+    
+    var encoder: JSONEncoder {
+        return .init()
     }
     
     func asURLRequest() throws -> URLRequest {
+        let urlPath = [url, endpoint.path].joined()
         var components = URLComponents(string: urlPath)
         
         if let parameters = parameters, !parameters.isEmpty {
@@ -39,9 +41,9 @@ public extension NetworkRequest {
         }
         
         var request = URLRequest(url: url, httpMethod: method, headers: headers)
-        if let body = body {
+        if let httpBody {
             if method != .get {
-                request.httpBody = try encoder.encode(body)
+                request.httpBody = try encoder.encode(httpBody)
             } else {
                 throw NetworkError.notAllowedRequest
             }

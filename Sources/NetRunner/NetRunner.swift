@@ -3,6 +3,7 @@ import Foundation
 
 public protocol NetRunner {
     func execute<T: Decodable>(request: NetworkRequest) async throws -> T
+    func execute(request: NetworkRequest) async throws
 }
 
 public extension NetRunner {
@@ -13,6 +14,11 @@ public extension NetRunner {
         
         try handleResponse(response)
         return try decodeData(data, decoder: request.decoder)
+    }
+    
+    func execute(request: NetworkRequest) async throws {
+        let urlRequest = try request.asURLRequest()
+        let (_, _) = try await URLSession.shared.data(for: urlRequest)
     }
     
     private func handleResponse(_ response: URLResponse) throws {
