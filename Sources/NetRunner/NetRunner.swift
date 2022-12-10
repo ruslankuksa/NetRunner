@@ -18,7 +18,9 @@ public extension NetRunner {
     
     func execute(request: NetworkRequest) async throws {
         let urlRequest = try request.asURLRequest()
-        let (_, _) = try await URLSession.shared.data(for: urlRequest)
+        let (_, response) = try await URLSession.shared.data(for: urlRequest)
+        
+        try handleResponse(response)
     }
     
     private func handleResponse(_ response: URLResponse) throws {

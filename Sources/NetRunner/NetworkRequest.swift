@@ -1,7 +1,7 @@
 
 import Foundation
 
-public typealias Parameters = [String:Encodable]
+public typealias Parameters = [String:Any]
 public typealias HTTPHeaders = [String:String]
 
 public protocol NetworkRequest {
