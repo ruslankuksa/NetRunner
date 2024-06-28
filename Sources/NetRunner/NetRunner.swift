@@ -39,7 +39,7 @@ public extension NetRunner {
             let response = try decoder.decode(T.self, from: data)
             return response
         } catch {
-            throw NetworkError.unableToDecodeResponse
+            throw NetworkError.unableToDecodeResponse(error)
         }
     }
 }
