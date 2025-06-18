@@ -4,6 +4,7 @@ import Foundation
 public protocol NetRunner {
     func execute<T: Decodable>(request: NetworkRequest) async throws -> T
     func execute(request: NetworkRequest) async throws
+    func handleResponse(_ response: URLResponse) throws
 }
 
 public extension NetRunner {
@@ -23,7 +24,7 @@ public extension NetRunner {
         try handleResponse(response)
     }
     
-    private func handleResponse(_ response: URLResponse) throws {
+    func handleResponse(_ response: URLResponse) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.badResponse
         }
