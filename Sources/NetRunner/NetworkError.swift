@@ -1,14 +1,14 @@
 
 import Foundation
 
-enum NetworkError: LocalizedError {
+public enum NetworkError: LocalizedError {
     case badURL
     case badRequest(String)
     case badResponse
     case unableToDecodeResponse(Error)
     case notAllowedRequest
     
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .badURL:
             return "Invalid URL"
