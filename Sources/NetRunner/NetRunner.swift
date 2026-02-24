@@ -28,9 +28,18 @@ public extension NetRunner {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.badResponse
         }
-        
+
         let statusCode = httpResponse.statusCode
-        if httpResponse.statusCode >= 400 {
+        switch statusCode {
+        case 200..<300:
+            return
+        case 401:
+            throw NetworkError.notAuthorized
+        case 400..<500:
+            throw NetworkError.clientError(statusCode: statusCode)
+        case 500..<600:
+            throw NetworkError.serverError(statusCode: statusCode)
+        default:
             throw NetworkError.badRequest(HTTPURLResponse.localizedString(forStatusCode: statusCode))
         }
     }

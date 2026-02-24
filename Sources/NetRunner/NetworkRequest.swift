@@ -15,6 +15,7 @@ public protocol NetworkRequest {
     var decoder: JSONDecoder { get }
     var encoder: JSONEncoder { get }
     var arrayEncoding: ArrayEncoding { get }
+    var cachePolicy: URLRequest.CachePolicy { get }
 }
 
 public extension NetworkRequest {
@@ -31,6 +32,10 @@ public extension NetworkRequest {
         return .brackets
     }
 
+    var cachePolicy: URLRequest.CachePolicy {
+        return .useProtocolCachePolicy
+    }
+
     func asURLRequest() throws -> URLRequest {
         let urlPath = [url, endpoint.path].joined()
         var components = URLComponents(string: urlPath)
@@ -44,6 +49,7 @@ public extension NetworkRequest {
         }
 
         var request = URLRequest(url: url, httpMethod: method, headers: headers)
+        request.cachePolicy = cachePolicy
         if let httpBody {
             if method != .get {
                 request.httpBody = try encoder.encode(httpBody)
