@@ -2,7 +2,7 @@
 import Foundation
 
 /// Errors that can occur during network request execution.
-public enum NetworkError: LocalizedError, Equatable {
+public enum NetworkError: LocalizedError, Equatable, Sendable {
     /// The constructed URL is not valid.
     case invalidURL
     /// The request failed with an unexpected status code or error.
@@ -10,7 +10,7 @@ public enum NetworkError: LocalizedError, Equatable {
     /// The server returned a response that is not a valid HTTP response.
     case invalidResponse
     /// The response data could not be decoded into the expected type.
-    case decodingFailed(Error)
+    case decodingFailed(any Error & Sendable)
     /// An HTTP body was set on a GET request, which is not allowed.
     case httpBodyNotAllowedForGET
     /// The server returned HTTP 401 Unauthorized.

@@ -1,111 +1,102 @@
 
-import XCTest
+import Testing
+import Foundation
 @testable import NetRunner
 
-final class NetworkErrorTests: XCTestCase {
+struct NetworkErrorTests {
 
     // MARK: - init(_ error:)
 
-    func testInit_timeout() {
+    @Test func initTimeout() {
         let error = URLError(.timedOut)
-        XCTAssertEqual(NetworkError(error), .timeout)
+        #expect(NetworkError(error) == .timeout)
     }
 
-    func testInit_notConnectedToInternet() {
+    @Test func initNotConnectedToInternet() {
         let error = URLError(.notConnectedToInternet)
-        XCTAssertEqual(NetworkError(error), .noConnectivity)
+        #expect(NetworkError(error) == .noConnectivity)
     }
 
-    func testInit_networkConnectionLost() {
+    @Test func initNetworkConnectionLost() {
         let error = URLError(.networkConnectionLost)
-        XCTAssertEqual(NetworkError(error), .noConnectivity)
+        #expect(NetworkError(error) == .noConnectivity)
     }
 
-    func testInit_otherURLError_mapsToRequestFailed() {
+    @Test func initOtherURLErrorMapsToRequestFailed() {
         let error = URLError(.badURL)
         if case .requestFailed = NetworkError(error) {
             // pass
         } else {
-            XCTFail("Expected .requestFailed for unhandled URLError")
+            Issue.record("Expected .requestFailed for unhandled URLError")
         }
     }
 
-    func testInit_nonURLError_mapsToRequestFailed() {
+    @Test func initNonURLErrorMapsToRequestFailed() {
         let error = NSError(domain: "test", code: 42)
         if case .requestFailed = NetworkError(error) {
             // pass
         } else {
-            XCTFail("Expected .requestFailed for non-URLError")
+            Issue.record("Expected .requestFailed for non-URLError")
         }
     }
 
     // MARK: - errorDescription
 
-    func testErrorDescription_allCasesNonNil() {
-        let errors: [NetworkError] = [
-            .invalidURL,
-            .requestFailed("oops"),
-            .invalidResponse,
-            .decodingFailed(NSError(domain: "d", code: 1)),
-            .httpBodyNotAllowedForGET,
-            .unauthorized,
-            .timeout,
-            .noConnectivity,
-            .serverError(statusCode: 503),
-            .clientError(statusCode: 404),
-        ]
-        for error in errors {
-            XCTAssertNotNil(error.errorDescription, "\(error) should have a non-nil description")
-        }
+    @Test(arguments: [
+        NetworkError.invalidURL,
+        NetworkError.requestFailed("oops"),
+        NetworkError.invalidResponse,
+        NetworkError.decodingFailed(NSError(domain: "d", code: 1)),
+        NetworkError.httpBodyNotAllowedForGET,
+        NetworkError.unauthorized,
+        NetworkError.timeout,
+        NetworkError.noConnectivity,
+        NetworkError.serverError(statusCode: 503),
+        NetworkError.clientError(statusCode: 404),
+    ])
+    func errorDescriptionNonNil(error: NetworkError) {
+        #expect(error.errorDescription != nil, "\(error) should have a non-nil description")
     }
 
     // MARK: - validate status dispatch (via NetRunner default)
 
-    func testValidate_200_doesNotThrow() {
+    @Test func validate200DoesNotThrow() throws {
         let runner = TestRunner()
         let response = makeHTTPResponse(statusCode: 200)
-        XCTAssertNoThrow(try runner.validate(response))
+        #expect(throws: Never.self) { try runner.validate(response) }
     }
 
-    func testValidate_299_doesNotThrow() {
+    @Test func validate299DoesNotThrow() throws {
         let runner = TestRunner()
-        XCTAssertNoThrow(try runner.validate(makeHTTPResponse(statusCode: 299)))
+        #expect(throws: Never.self) { try runner.validate(makeHTTPResponse(statusCode: 299)) }
     }
 
-    func testValidate_401_throwsUnauthorized() {
+    @Test func validate401ThrowsUnauthorized() {
         let runner = TestRunner()
-        XCTAssertThrowsError(try runner.validate(makeHTTPResponse(statusCode: 401))) { error in
-            XCTAssertEqual(error as? NetworkError, .unauthorized)
+        #expect(throws: NetworkError.unauthorized) {
+            try runner.validate(makeHTTPResponse(statusCode: 401))
         }
     }
 
-    func testValidate_404_throwsClientError() {
+    @Test func validate404ThrowsClientError() {
         let runner = TestRunner()
-        XCTAssertThrowsError(try runner.validate(makeHTTPResponse(statusCode: 404))) { error in
-            if case .clientError(let code) = error as? NetworkError {
-                XCTAssertEqual(code, 404)
-            } else {
-                XCTFail("Expected .clientError(404)")
-            }
+        #expect(throws: NetworkError.clientError(statusCode: 404)) {
+            try runner.validate(makeHTTPResponse(statusCode: 404))
         }
     }
 
-    func testValidate_503_throwsServerError() {
+    @Test func validate503ThrowsServerError() {
         let runner = TestRunner()
-        XCTAssertThrowsError(try runner.validate(makeHTTPResponse(statusCode: 503))) { error in
-            if case .serverError(let code) = error as? NetworkError {
-                XCTAssertEqual(code, 503)
-            } else {
-                XCTFail("Expected .serverError(503)")
-            }
+        #expect(throws: NetworkError.serverError(statusCode: 503)) {
+            try runner.validate(makeHTTPResponse(statusCode: 503))
         }
     }
 
-    func testValidate_nonHTTP_throwsInvalidResponse() {
+    @Test func validateNonHTTPThrowsInvalidResponse() {
         let runner = TestRunner()
         let response = URLResponse(url: URL(string: "https://example.com")!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
-        XCTAssertThrowsError(try runner.validate(response)) { error in
-            XCTAssertEqual(error as? NetworkError, .invalidResponse)
+        #expect(throws: NetworkError.invalidResponse) {
+            try runner.validate(response)
         }
     }
 

@@ -2,7 +2,7 @@
 import Foundation
 
 /// Defines how array parameters should be encoded in URL query strings
-public enum ArrayEncoding {
+public enum ArrayEncoding: Sendable {
     /// Encodes arrays with brackets: `key[]=1&key[]=2&key[]=3`
     /// This is the most common format used by Rails and similar frameworks
     case brackets

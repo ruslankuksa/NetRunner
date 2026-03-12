@@ -1,9 +1,10 @@
 
-import XCTest
+import Testing
+import Foundation
 @testable import NetRunner
 
-@available(iOS 15, macOS 12, tvOS 15, watchOS 8, *)
-final class NetworkClientTests: XCTestCase {
+@Suite
+struct NetworkClientTests {
 
     // MARK: - Helpers
 
@@ -30,113 +31,86 @@ final class NetworkClientTests: XCTestCase {
 
     // MARK: - Decode success
 
-    func testExecute_200_decodesResponse() async throws {
+    @Test func execute200DecodesResponse() async throws {
         struct Payload: Decodable { let id: Int }
         let json = #"{"id":42}"#.data(using: .utf8)!
         let session = stubbedSession(statusCode: 200, data: json)
         let client = makeClient(session: session)
 
         let result: Payload = try await client.execute(request: TestNetworkRequest())
-        XCTAssertEqual(result.id, 42)
-        XCTAssertEqual(session.callCount, 1)
+        #expect(result.id == 42)
+        #expect(session.callCount == 1)
     }
 
     // MARK: - Decode failure
 
-    func testExecute_200_badJSON_throwsDecodingFailed() async {
+    @Test func execute200BadJSONThrowsDecodingFailed() async {
         struct Payload: Decodable { let id: Int }
         let session = stubbedSession(statusCode: 200, data: "not json".data(using: .utf8)!)
         let client = makeClient(session: session)
 
-        do {
+        await #expect(throws: NetworkError.self) {
             let _: Payload = try await client.execute(request: TestNetworkRequest())
-            XCTFail("Expected throw")
-        } catch let error as NetworkError {
-            if case .decodingFailed = error { /* pass */ }
-            else { XCTFail("Expected .decodingFailed, got \(error)") }
-        } catch {
-            XCTFail("Unexpected error type: \(error)")
         }
     }
 
     // MARK: - HTTP error dispatch
 
-    func testExecute_401_throwsUnauthorized() async {
+    @Test func execute401ThrowsUnauthorized() async {
         let session = stubbedSession(statusCode: 401)
         let client = makeClient(session: session)
 
-        do {
+        await #expect(throws: NetworkError.unauthorized) {
             try await client.send(request: TestNetworkRequest())
-            XCTFail("Expected throw")
-        } catch let error as NetworkError {
-            XCTAssertEqual(error, .unauthorized)
-        } catch {
-            XCTFail("Unexpected error type: \(error)")
         }
     }
 
-    func testExecute_404_throwsClientError() async {
+    @Test func execute404ThrowsClientError() async {
         let session = stubbedSession(statusCode: 404)
         let client = makeClient(session: session)
 
-        do {
+        await #expect(throws: NetworkError.clientError(statusCode: 404)) {
             try await client.send(request: TestNetworkRequest())
-            XCTFail("Expected throw")
-        } catch let error as NetworkError {
-            XCTAssertEqual(error, .clientError(statusCode: 404))
-        } catch {
-            XCTFail("Unexpected error type: \(error)")
         }
     }
 
-    func testExecute_503_throwsServerError() async {
+    @Test func execute503ThrowsServerError() async {
         let session = stubbedSession(statusCode: 503)
         let client = makeClient(session: session)
 
-        do {
+        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
             try await client.send(request: TestNetworkRequest())
-            XCTFail("Expected throw")
-        } catch let error as NetworkError {
-            XCTAssertEqual(error, .serverError(statusCode: 503))
-        } catch {
-            XCTFail("Unexpected error type: \(error)")
         }
     }
 
     // MARK: - Retry — call count
 
-    func testRetry_503_exhaustsAttempts() async {
+    @Test func retry503ExhaustsAttempts() async {
         // maxAttempts: 3 → 1 initial + 3 retries = 4 total calls
         let session = stubbedSession(statusCode: 503)
         let client = makeClient(session: session, retryPolicy: .exponential(maxAttempts: 3, baseDelay: 0))
 
-        do {
+        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
             try await client.send(request: TestNetworkRequest())
-            XCTFail("Expected throw")
-        } catch let error as NetworkError {
-            XCTAssertEqual(error, .serverError(statusCode: 503))
-        } catch {
-            XCTFail("Unexpected error type: \(error)")
         }
-        XCTAssertEqual(session.callCount, 4, "1 initial + 3 retries = 4")
+        #expect(session.callCount == 4, "1 initial + 3 retries = 4")
     }
 
-    func testRetry_404_doesNotRetry() async {
+    @Test func retry404DoesNotRetry() async {
         // 404 is a client error — isRetryable returns false
         let session = stubbedSession(statusCode: 404)
         let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 3, delay: 0))
 
-        do {
+        await #expect(throws: NetworkError.self) {
             try await client.send(request: TestNetworkRequest())
-            XCTFail("Expected throw")
-        } catch { /* expected */ }
+        }
 
-        XCTAssertEqual(session.callCount, 1, "Client errors should not be retried")
+        #expect(session.callCount == 1, "Client errors should not be retried")
     }
 
     // MARK: - ResponseInterceptor veto
 
-    func testRetry_vetoedByResponseInterceptor_doesNotRetry() async {
+    @Test func retryVetoedByResponseInterceptorDoesNotRetry() async {
         let session = stubbedSession(statusCode: 503)
         let interceptor = MockResponseInterceptor(shouldRetryResult: false)
         let client = makeClient(
@@ -145,18 +119,17 @@ final class NetworkClientTests: XCTestCase {
             responseInterceptors: [interceptor]
         )
 
-        do {
+        await #expect(throws: NetworkError.self) {
             try await client.send(request: TestNetworkRequest())
-            XCTFail("Expected throw")
-        } catch { /* expected */ }
+        }
 
-        XCTAssertEqual(session.callCount, 1, "Interceptor vetoed — no retries")
-        XCTAssertEqual(interceptor.callCount, 1)
+        #expect(session.callCount == 1, "Interceptor vetoed — no retries")
+        #expect(interceptor.callCount == 1)
     }
 
     // MARK: - RequestInterceptor chain order
 
-    func testRequestInterceptor_isAppliedBeforeRequest() async throws {
+    @Test func requestInterceptorIsAppliedBeforeRequest() async throws {
         struct Payload: Decodable { let id: Int }
         let json = #"{"id":1}"#.data(using: .utf8)!
         let session = stubbedSession(statusCode: 200, data: json)
@@ -167,11 +140,11 @@ final class NetworkClientTests: XCTestCase {
 
         let _: Payload = try await client.execute(request: TestNetworkRequest())
 
-        XCTAssertEqual(interceptor.interceptCallCount, 1)
-        XCTAssertEqual(session.capturedRequests.first?.value(forHTTPHeaderField: "X-Token"), "abc")
+        #expect(interceptor.interceptCallCount == 1)
+        #expect(session.capturedRequests.first?.value(forHTTPHeaderField: "X-Token") == "abc")
     }
 
-    func testRequestInterceptors_appliedInOrder() async throws {
+    @Test func requestInterceptorsAppliedInOrder() async throws {
         struct Payload: Decodable { let id: Int }
         let json = #"{"id":1}"#.data(using: .utf8)!
         let session = stubbedSession(statusCode: 200, data: json)
@@ -185,13 +158,13 @@ final class NetworkClientTests: XCTestCase {
         let _: Payload = try await client.execute(request: TestNetworkRequest())
 
         let captured = session.capturedRequests.first
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "X-First"), "1")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "X-Second"), "2")
+        #expect(captured?.value(forHTTPHeaderField: "X-First") == "1")
+        #expect(captured?.value(forHTTPHeaderField: "X-Second") == "2")
     }
 
     // MARK: - cachePolicy forwarded
 
-    func testCachePolicy_forwardedToURLRequest() async throws {
+    @Test func cachePolicyForwardedToURLRequest() async throws {
         struct Payload: Decodable { let id: Int }
         let json = #"{"id":1}"#.data(using: .utf8)!
         let session = stubbedSession(statusCode: 200, data: json)
@@ -200,6 +173,6 @@ final class NetworkClientTests: XCTestCase {
         let req = TestNetworkRequest(cachePolicy: .returnCacheDataElseLoad)
         let _: Payload = try await client.execute(request: req)
 
-        XCTAssertEqual(session.capturedRequests.first?.cachePolicy, .returnCacheDataElseLoad)
+        #expect(session.capturedRequests.first?.cachePolicy == .returnCacheDataElseLoad)
     }
 }

@@ -63,6 +63,7 @@ public actor NetworkClient: NetRunner {
 
         var attempt = 0
         while true {
+            try Task.checkCancellation()
             do {
                 let (data, response) = try await session.data(for: urlRequest)
                 try validate(response)
@@ -90,6 +91,8 @@ public actor NetworkClient: NetRunner {
                     try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 }
                 attempt += 1
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw NetworkError(error)
             }
