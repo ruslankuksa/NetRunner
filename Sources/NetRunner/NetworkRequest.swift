@@ -1,15 +1,19 @@
 
 import Foundation
 
-public typealias Parameters = [String:Any]
-public typealias HTTPHeaders = [String:String]
+/// Query parameters for a network request.
+public typealias QueryParameters = [String: Any]
 
+/// Describes a single HTTP request: base URL, endpoint path, method, headers,
+/// query parameters, and optional body.
 public protocol NetworkRequest {
-    var url: String { get }
+    associatedtype Route: Endpoint
+
+    var baseURL: URL { get }
     var method: HTTPMethod { get }
-    var endpoint: Endpoint { get }
-    var headers: HTTPHeaders? { get set }
-    var parameters: Parameters? { get }
+    var endpoint: Route { get }
+    var headers: [String: String]? { get set }
+    var parameters: QueryParameters? { get }
     var httpBody: Encodable? { get }
 
     var decoder: JSONDecoder { get }
@@ -36,8 +40,9 @@ public extension NetworkRequest {
         return .useProtocolCachePolicy
     }
 
-    func asURLRequest() throws -> URLRequest {
-        let urlPath = [url, endpoint.path].joined()
+    /// Builds a `URLRequest` from this network request's properties.
+    func makeURLRequest() throws -> URLRequest {
+        let urlPath = baseURL.absoluteString + endpoint.path
         var components = URLComponents(string: urlPath)
 
         if let parameters = parameters, !parameters.isEmpty {
@@ -45,23 +50,23 @@ public extension NetworkRequest {
         }
 
         guard let url = components?.url else {
-            throw NetworkError.badURL
+            throw NetworkError.invalidURL
         }
 
-        var request = URLRequest(url: url, httpMethod: method, headers: headers)
+        var request = URLRequest(url: url, method: method, headers: headers)
         request.cachePolicy = cachePolicy
         if let httpBody {
             if method != .get {
                 request.httpBody = try encoder.encode(httpBody)
             } else {
-                throw NetworkError.notAllowedRequest
+                throw NetworkError.httpBodyNotAllowedForGET
             }
         }
 
         return request
     }
 
-    private func buildQueryItems(from parameters: Parameters, encoding: ArrayEncoding) -> [URLQueryItem] {
+    private func buildQueryItems(from parameters: QueryParameters, encoding: ArrayEncoding) -> [URLQueryItem] {
         var queryItems: [URLQueryItem] = []
 
         for (key, value) in parameters {

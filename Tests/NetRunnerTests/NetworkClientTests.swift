@@ -43,7 +43,7 @@ final class NetworkClientTests: XCTestCase {
 
     // MARK: - Decode failure
 
-    func testExecute_200_badJSON_throwsUnableToDecode() async {
+    func testExecute_200_badJSON_throwsDecodingFailed() async {
         struct Payload: Decodable { let id: Int }
         let session = stubbedSession(statusCode: 200, data: "not json".data(using: .utf8)!)
         let client = makeClient(session: session)
@@ -52,8 +52,8 @@ final class NetworkClientTests: XCTestCase {
             let _: Payload = try await client.execute(request: TestNetworkRequest())
             XCTFail("Expected throw")
         } catch let error as NetworkError {
-            if case .unableToDecodeResponse = error { /* pass */ }
-            else { XCTFail("Expected .unableToDecodeResponse, got \(error)") }
+            if case .decodingFailed = error { /* pass */ }
+            else { XCTFail("Expected .decodingFailed, got \(error)") }
         } catch {
             XCTFail("Unexpected error type: \(error)")
         }
@@ -61,15 +61,15 @@ final class NetworkClientTests: XCTestCase {
 
     // MARK: - HTTP error dispatch
 
-    func testExecute_401_throwsNotAuthorized() async {
+    func testExecute_401_throwsUnauthorized() async {
         let session = stubbedSession(statusCode: 401)
         let client = makeClient(session: session)
 
         do {
-            try await client.execute(request: TestNetworkRequest())
+            try await client.send(request: TestNetworkRequest())
             XCTFail("Expected throw")
         } catch let error as NetworkError {
-            XCTAssertEqual(error, .notAuthorized)
+            XCTAssertEqual(error, .unauthorized)
         } catch {
             XCTFail("Unexpected error type: \(error)")
         }
@@ -80,7 +80,7 @@ final class NetworkClientTests: XCTestCase {
         let client = makeClient(session: session)
 
         do {
-            try await client.execute(request: TestNetworkRequest())
+            try await client.send(request: TestNetworkRequest())
             XCTFail("Expected throw")
         } catch let error as NetworkError {
             XCTAssertEqual(error, .clientError(statusCode: 404))
@@ -94,7 +94,7 @@ final class NetworkClientTests: XCTestCase {
         let client = makeClient(session: session)
 
         do {
-            try await client.execute(request: TestNetworkRequest())
+            try await client.send(request: TestNetworkRequest())
             XCTFail("Expected throw")
         } catch let error as NetworkError {
             XCTAssertEqual(error, .serverError(statusCode: 503))
@@ -111,7 +111,7 @@ final class NetworkClientTests: XCTestCase {
         let client = makeClient(session: session, retryPolicy: .exponential(maxAttempts: 3, baseDelay: 0))
 
         do {
-            try await client.execute(request: TestNetworkRequest())
+            try await client.send(request: TestNetworkRequest())
             XCTFail("Expected throw")
         } catch let error as NetworkError {
             XCTAssertEqual(error, .serverError(statusCode: 503))
@@ -122,12 +122,12 @@ final class NetworkClientTests: XCTestCase {
     }
 
     func testRetry_404_doesNotRetry() async {
-        // 404 is a client error — shouldRetry returns false
+        // 404 is a client error — isRetryable returns false
         let session = stubbedSession(statusCode: 404)
         let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 3, delay: 0))
 
         do {
-            try await client.execute(request: TestNetworkRequest())
+            try await client.send(request: TestNetworkRequest())
             XCTFail("Expected throw")
         } catch { /* expected */ }
 
@@ -146,7 +146,7 @@ final class NetworkClientTests: XCTestCase {
         )
 
         do {
-            try await client.execute(request: TestNetworkRequest())
+            try await client.send(request: TestNetworkRequest())
             XCTFail("Expected throw")
         } catch { /* expected */ }
 
@@ -167,7 +167,7 @@ final class NetworkClientTests: XCTestCase {
 
         let _: Payload = try await client.execute(request: TestNetworkRequest())
 
-        XCTAssertEqual(interceptor.adaptCallCount, 1)
+        XCTAssertEqual(interceptor.interceptCallCount, 1)
         XCTAssertEqual(session.capturedRequests.first?.value(forHTTPHeaderField: "X-Token"), "abc")
     }
 

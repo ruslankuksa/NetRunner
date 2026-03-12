@@ -23,53 +23,53 @@ public actor NetworkClient: NetRunner {
 
     // MARK: - NetRunner conformance
 
-    public func execute<T: Decodable>(request: NetworkRequest) async throws -> T {
+    public func execute<T: Decodable>(request: any NetworkRequest) async throws -> T {
         let data = try await performRequest(request)
         return try decodeData(data, decoder: request.decoder)
     }
 
-    public func execute(request: NetworkRequest) async throws {
+    public func send(request: any NetworkRequest) async throws {
         _ = try await performRequest(request)
     }
 
-    public nonisolated func handleResponse(_ response: URLResponse) throws {
+    public nonisolated func validate(_ response: URLResponse) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.badResponse
+            throw NetworkError.invalidResponse
         }
         let statusCode = httpResponse.statusCode
         switch statusCode {
         case 200..<300:
             return
         case 401:
-            throw NetworkError.notAuthorized
+            throw NetworkError.unauthorized
         case 400..<500:
             throw NetworkError.clientError(statusCode: statusCode)
         case 500..<600:
             throw NetworkError.serverError(statusCode: statusCode)
         default:
-            throw NetworkError.badRequest(HTTPURLResponse.localizedString(forStatusCode: statusCode))
+            throw NetworkError.requestFailed(HTTPURLResponse.localizedString(forStatusCode: statusCode))
         }
     }
 
     // MARK: - Private
 
-    private func performRequest(_ networkRequest: NetworkRequest) async throws -> Data {
-        var urlRequest = try networkRequest.asURLRequest()
+    private func performRequest(_ networkRequest: any NetworkRequest) async throws -> Data {
+        var urlRequest = try networkRequest.makeURLRequest()
 
         // Apply request interceptors left-to-right
         for interceptor in requestInterceptors {
-            urlRequest = try await interceptor.adapt(urlRequest)
+            urlRequest = try await interceptor.intercept(urlRequest)
         }
 
         var attempt = 0
         while true {
             do {
                 let (data, response) = try await session.data(for: urlRequest)
-                try handleResponse(response)
+                try validate(response)
                 return data
             } catch let networkError as NetworkError {
                 let shouldRetryByPolicy = attempt < retryPolicy.maxAttempts
-                    && retryPolicy.shouldRetry(error: networkError)
+                    && retryPolicy.isRetryable(error: networkError)
 
                 guard shouldRetryByPolicy else {
                     throw networkError
@@ -77,7 +77,7 @@ public actor NetworkClient: NetRunner {
 
                 let context = RetryContext(
                     request: urlRequest,
-                    attemptCount: attempt,
+                    attemptIndex: attempt,
                     error: networkError
                 )
                 let allApprove = await allResponseInterceptorsApprove(context: context)
@@ -85,13 +85,13 @@ public actor NetworkClient: NetRunner {
                     throw networkError
                 }
 
-                let delay = retryPolicy.delayNanoseconds(forAttempt: attempt)
-                if delay > 0 {
-                    try await Task.sleep(nanoseconds: delay)
+                let delaySeconds = retryPolicy.delay(forAttempt: attempt)
+                if delaySeconds > 0 {
+                    try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 }
                 attempt += 1
             } catch {
-                throw NetworkError.mapURLError(error)
+                throw NetworkError(error)
             }
         }
     }
@@ -109,7 +109,7 @@ public actor NetworkClient: NetRunner {
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
-            throw NetworkError.unableToDecodeResponse(error)
+            throw NetworkError.decodingFailed(error)
         }
     }
 }

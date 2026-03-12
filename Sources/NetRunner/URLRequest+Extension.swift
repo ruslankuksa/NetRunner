@@ -2,10 +2,11 @@
 import Foundation
 
 extension URLRequest {
-    public init(url: URL, httpMethod: HTTPMethod, headers: HTTPHeaders? = nil) {
+    /// Creates a URL request with the given URL, HTTP method, and optional headers.
+    public init(url: URL, method: HTTPMethod, headers: [String: String]? = nil) {
         self.init(url: url)
-        
-        self.httpMethod = httpMethod.rawValue
+
+        self.httpMethod = method.rawValue
         self.allHTTPHeaderFields = headers
     }
 }

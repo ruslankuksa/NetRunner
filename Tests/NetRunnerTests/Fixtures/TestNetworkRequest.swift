@@ -10,26 +10,26 @@ struct TestEndpoint: Endpoint {
 }
 
 struct TestNetworkRequest: NetworkRequest {
-    var url: String
+    var baseURL: URL
     var method: HTTPMethod
-    var endpoint: Endpoint
-    var headers: HTTPHeaders?
-    var parameters: Parameters?
+    var endpoint: TestEndpoint
+    var headers: [String: String]?
+    var parameters: QueryParameters?
     var httpBody: Encodable?
     var cachePolicy: URLRequest.CachePolicy
     var arrayEncoding: ArrayEncoding
 
     init(
-        url: String = "https://example.com",
+        baseURL: URL = URL(string: "https://example.com")!,
         method: HTTPMethod = .get,
-        endpoint: Endpoint = TestEndpoint(),
-        headers: HTTPHeaders? = nil,
-        parameters: Parameters? = nil,
+        endpoint: TestEndpoint = TestEndpoint(),
+        headers: [String: String]? = nil,
+        parameters: QueryParameters? = nil,
         httpBody: Encodable? = nil,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         arrayEncoding: ArrayEncoding = .brackets
     ) {
-        self.url = url
+        self.baseURL = baseURL
         self.method = method
         self.endpoint = endpoint
         self.headers = headers

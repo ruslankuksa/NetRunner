@@ -4,38 +4,38 @@ import XCTest
 
 final class NetworkErrorTests: XCTestCase {
 
-    // MARK: - mapURLError
+    // MARK: - init(_ error:)
 
-    func testMapURLError_timeout() {
+    func testInit_timeout() {
         let error = URLError(.timedOut)
-        XCTAssertEqual(NetworkError.mapURLError(error), .timeout)
+        XCTAssertEqual(NetworkError(error), .timeout)
     }
 
-    func testMapURLError_notConnectedToInternet() {
+    func testInit_notConnectedToInternet() {
         let error = URLError(.notConnectedToInternet)
-        XCTAssertEqual(NetworkError.mapURLError(error), .noConnectivity)
+        XCTAssertEqual(NetworkError(error), .noConnectivity)
     }
 
-    func testMapURLError_networkConnectionLost() {
+    func testInit_networkConnectionLost() {
         let error = URLError(.networkConnectionLost)
-        XCTAssertEqual(NetworkError.mapURLError(error), .noConnectivity)
+        XCTAssertEqual(NetworkError(error), .noConnectivity)
     }
 
-    func testMapURLError_otherURLError_mapsToBadRequest() {
+    func testInit_otherURLError_mapsToRequestFailed() {
         let error = URLError(.badURL)
-        if case .badRequest = NetworkError.mapURLError(error) {
+        if case .requestFailed = NetworkError(error) {
             // pass
         } else {
-            XCTFail("Expected .badRequest for unhandled URLError")
+            XCTFail("Expected .requestFailed for unhandled URLError")
         }
     }
 
-    func testMapURLError_nonURLError_mapsToBadRequest() {
+    func testInit_nonURLError_mapsToRequestFailed() {
         let error = NSError(domain: "test", code: 42)
-        if case .badRequest = NetworkError.mapURLError(error) {
+        if case .requestFailed = NetworkError(error) {
             // pass
         } else {
-            XCTFail("Expected .badRequest for non-URLError")
+            XCTFail("Expected .requestFailed for non-URLError")
         }
     }
 
@@ -43,12 +43,12 @@ final class NetworkErrorTests: XCTestCase {
 
     func testErrorDescription_allCasesNonNil() {
         let errors: [NetworkError] = [
-            .badURL,
-            .badRequest("oops"),
-            .badResponse,
-            .unableToDecodeResponse(NSError(domain: "d", code: 1)),
-            .notAllowedRequest,
-            .notAuthorized,
+            .invalidURL,
+            .requestFailed("oops"),
+            .invalidResponse,
+            .decodingFailed(NSError(domain: "d", code: 1)),
+            .httpBodyNotAllowedForGET,
+            .unauthorized,
             .timeout,
             .noConnectivity,
             .serverError(statusCode: 503),
@@ -59,29 +59,29 @@ final class NetworkErrorTests: XCTestCase {
         }
     }
 
-    // MARK: - handleResponse status dispatch (via NetRunner default)
+    // MARK: - validate status dispatch (via NetRunner default)
 
-    func testHandleResponse_200_doesNotThrow() {
+    func testValidate_200_doesNotThrow() {
         let runner = TestRunner()
         let response = makeHTTPResponse(statusCode: 200)
-        XCTAssertNoThrow(try runner.handleResponse(response))
+        XCTAssertNoThrow(try runner.validate(response))
     }
 
-    func testHandleResponse_299_doesNotThrow() {
+    func testValidate_299_doesNotThrow() {
         let runner = TestRunner()
-        XCTAssertNoThrow(try runner.handleResponse(makeHTTPResponse(statusCode: 299)))
+        XCTAssertNoThrow(try runner.validate(makeHTTPResponse(statusCode: 299)))
     }
 
-    func testHandleResponse_401_throwsNotAuthorized() {
+    func testValidate_401_throwsUnauthorized() {
         let runner = TestRunner()
-        XCTAssertThrowsError(try runner.handleResponse(makeHTTPResponse(statusCode: 401))) { error in
-            XCTAssertEqual(error as? NetworkError, .notAuthorized)
+        XCTAssertThrowsError(try runner.validate(makeHTTPResponse(statusCode: 401))) { error in
+            XCTAssertEqual(error as? NetworkError, .unauthorized)
         }
     }
 
-    func testHandleResponse_404_throwsClientError() {
+    func testValidate_404_throwsClientError() {
         let runner = TestRunner()
-        XCTAssertThrowsError(try runner.handleResponse(makeHTTPResponse(statusCode: 404))) { error in
+        XCTAssertThrowsError(try runner.validate(makeHTTPResponse(statusCode: 404))) { error in
             if case .clientError(let code) = error as? NetworkError {
                 XCTAssertEqual(code, 404)
             } else {
@@ -90,9 +90,9 @@ final class NetworkErrorTests: XCTestCase {
         }
     }
 
-    func testHandleResponse_503_throwsServerError() {
+    func testValidate_503_throwsServerError() {
         let runner = TestRunner()
-        XCTAssertThrowsError(try runner.handleResponse(makeHTTPResponse(statusCode: 503))) { error in
+        XCTAssertThrowsError(try runner.validate(makeHTTPResponse(statusCode: 503))) { error in
             if case .serverError(let code) = error as? NetworkError {
                 XCTAssertEqual(code, 503)
             } else {
@@ -101,11 +101,11 @@ final class NetworkErrorTests: XCTestCase {
         }
     }
 
-    func testHandleResponse_nonHTTP_throwsBadResponse() {
+    func testValidate_nonHTTP_throwsInvalidResponse() {
         let runner = TestRunner()
         let response = URLResponse(url: URL(string: "https://example.com")!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
-        XCTAssertThrowsError(try runner.handleResponse(response)) { error in
-            XCTAssertEqual(error as? NetworkError, .badResponse)
+        XCTAssertThrowsError(try runner.validate(response)) { error in
+            XCTAssertEqual(error as? NetworkError, .invalidResponse)
         }
     }
 
@@ -121,9 +121,8 @@ final class NetworkErrorTests: XCTestCase {
     }
 }
 
-// Minimal conformer so we can call the default handleResponse
+// Minimal conformer so we can call the default validate
 private struct TestRunner: NetRunner {
-    func execute<T: Decodable>(request: NetworkRequest) async throws -> T { fatalError() }
-    func execute(request: NetworkRequest) async throws { fatalError() }
+    func execute<T: Decodable>(request: any NetworkRequest) async throws -> T { fatalError() }
+    func send(request: any NetworkRequest) async throws { fatalError() }
 }
-
