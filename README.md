@@ -47,15 +47,15 @@ enum UserEndpoint: Endpoint {
 
 ```swift
 struct GetUserRequest: NetworkRequest {
-    var url: String { "https://api.example.com" }
+    var baseURL: URL { URL(string: "https://api.example.com")! }
     var method: HTTPMethod { .get }
-    var endpoint: Endpoint
-    var headers: HTTPHeaders? = ["Accept": "application/json"]
-    var parameters: Parameters? = nil
+    var endpoint: UserEndpoint
+    var headers: [String: String]? = ["Accept": "application/json"]
+    var parameters: QueryParameters? = nil
     var httpBody: Encodable? = nil
 
     init(id: String) {
-        endpoint = UserEndpoint.profile(id: id)
+        endpoint = .profile(id: id)
     }
 }
 ```
@@ -119,7 +119,7 @@ Mutate the `URLRequest` before it is sent — add auth headers, sign requests, e
 struct BearerTokenInterceptor: RequestInterceptor {
     let token: String
 
-    func adapt(_ request: URLRequest) async throws -> URLRequest {
+    func intercept(_ request: URLRequest) async throws -> URLRequest {
         var r = request
         r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return r
@@ -140,7 +140,7 @@ Veto a retry after a failure — useful for token-refresh logic or circuit break
 ```swift
 struct TokenRefreshInterceptor: ResponseInterceptor {
     func shouldRetry(context: RetryContext) async -> Bool {
-        guard context.error == .notAuthorized else { return true }
+        guard context.error == .unauthorized else { return true }
         return await refreshToken()
     }
 }
@@ -186,17 +186,17 @@ struct CatalogRequest: NetworkRequest {
 ```swift
 do {
     let user: User = try await client.execute(request: GetUserRequest(id: "42"))
-} catch NetworkError.notAuthorized {
+} catch NetworkError.unauthorized {
     // 401
-} catch NetworkError.clientError(let code) {
+} catch NetworkError.clientError(let statusCode) {
     // 400–499 (except 401)
-} catch NetworkError.serverError(let code) {
+} catch NetworkError.serverError(let statusCode) {
     // 500–599
 } catch NetworkError.timeout {
     // URLError.timedOut
 } catch NetworkError.noConnectivity {
     // no internet / connection lost
-} catch NetworkError.unableToDecodeResponse(let error) {
+} catch NetworkError.decodingFailed(let error) {
     // JSON decode failure
 }
 ```
@@ -205,12 +205,12 @@ do {
 
 | Case | Description |
 |------|-------------|
-| `.badURL` | The URL string could not be parsed |
-| `.badRequest(String)` | Unhandled HTTP status or URL error |
-| `.badResponse` | Response was not an `HTTPURLResponse` |
-| `.unableToDecodeResponse(Error)` | JSON decoding failed |
-| `.notAllowedRequest` | `httpBody` set on a GET request |
-| `.notAuthorized` | HTTP 401 |
+| `.invalidURL` | The URL string could not be parsed |
+| `.requestFailed(String)` | Unhandled HTTP status or URL error |
+| `.invalidResponse` | Response was not an `HTTPURLResponse` |
+| `.decodingFailed(Error)` | JSON decoding failed |
+| `.httpBodyNotAllowedForGET` | `httpBody` set on a GET request |
+| `.unauthorized` | HTTP 401 |
 | `.clientError(statusCode:)` | HTTP 400–499 (except 401) |
 | `.serverError(statusCode:)` | HTTP 500–599 |
 | `.timeout` | Request timed out |
@@ -224,7 +224,7 @@ Control how array query parameters are serialised:
 
 ```swift
 struct SearchRequest: NetworkRequest {
-    var parameters: Parameters? = ["ids": [1, 2, 3]]
+    var parameters: QueryParameters? = ["ids": [1, 2, 3]]
     var arrayEncoding: ArrayEncoding { .brackets }   // ids[]=1&ids[]=2&ids[]=3
     // .noBrackets  →  ids=1&ids=2&ids=3
     // .commaSeparated  →  ids=1,2,3
