@@ -3,6 +3,10 @@ import Testing
 import Foundation
 @testable import NetRunner
 
+// `multipartPreparationFailureRemovesTemporaryFile` snapshots the contents of
+// `FileManager.default.temporaryDirectory` and asserts on `Set` equality, so
+// running these tests in parallel with each other (or with other suites that
+// touch the temp dir) would produce flakes. Hence `.serialized`.
 @Suite(.serialized)
 struct UploadTests {
 
@@ -281,6 +285,7 @@ struct UploadTests {
         await #expect(throws: NetworkError.uploadBodyNotAllowedForGET) {
             _ = try await collect(client.upload(request: request))
         }
+        #expect(session.capturedRequests.isEmpty)
         #expect(session.capturedUploadFileURLs.isEmpty)
     }
 

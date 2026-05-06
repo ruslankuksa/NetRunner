@@ -24,7 +24,7 @@ public actor NetworkClient: NetRunner {
 
     public func execute<T: Decodable>(request: any NetworkRequest) async throws -> T {
         let data = try await performRequest(request)
-        return try decodeData(data, decoder: request.decoder)
+        return try Self.decodeData(data, decoder: request.decoder)
     }
 
     public func send(request: any NetworkRequest) async throws {
@@ -36,46 +36,15 @@ public actor NetworkClient: NetRunner {
         responseType: T.Type = T.self
     ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
         let decoder = request.decoder
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let data = try await performUpload(request) { progress in
-                        continuation.yield(.progress(progress))
-                    }
-                    let response = try decodeData(data, decoder: decoder) as T
-                    continuation.yield(.response(response))
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
+        return makeUploadStream(request: request) { data in
+            try Self.decodeData(data, decoder: decoder)
         }
     }
 
     public nonisolated func upload(
         request: any UploadRequest
     ) -> AsyncThrowingStream<UploadEvent<Void>, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    _ = try await performUpload(request) { progress in
-                        continuation.yield(.progress(progress))
-                    }
-                    continuation.yield(.response(()))
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
+        makeUploadStream(request: request) { _ in () }
     }
 
     public nonisolated func validate(_ response: URLResponse) throws {
@@ -108,7 +77,6 @@ public actor NetworkClient: NetRunner {
     private func performRequest(_ networkRequest: any NetworkRequest) async throws -> Data {
         var urlRequest = try networkRequest.makeURLRequest()
 
-        // Apply request interceptors left-to-right
         for interceptor in requestInterceptors {
             urlRequest = try await interceptor.intercept(urlRequest)
         }
@@ -147,6 +115,30 @@ public actor NetworkClient: NetRunner {
                 throw CancellationError()
             } catch {
                 throw NetworkError(error)
+            }
+        }
+    }
+
+    private nonisolated func makeUploadStream<T>(
+        request: any UploadRequest,
+        decode: @escaping @Sendable (Data) throws -> T
+    ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let data = try await performUpload(request) { progress in
+                        continuation.yield(.progress(progress))
+                    }
+                    let response = try decode(data)
+                    continuation.yield(.response(response))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
     }
@@ -226,33 +218,59 @@ public actor NetworkClient: NetRunner {
         var urlRequest = try uploadRequest.makeURLRequest()
         switch uploadRequest.uploadBody {
         case .rawFile(let fileURL, let contentType):
-            setContentTypeIfNeeded(contentType ?? "application/octet-stream", on: &urlRequest)
+            setContentType(contentType ?? "application/octet-stream", on: &urlRequest, override: false)
+            setContentLength(forFileAt: fileURL, on: &urlRequest)
             return PreparedUpload(request: urlRequest, fileURL: fileURL, temporaryFileURL: nil)
 
         case .multipart(let fields, let files, let boundary):
             let boundary = boundary ?? "Boundary-\(UUID().uuidString)"
-            let temporaryFileURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("NetRunner-\(UUID().uuidString).upload")
-            do {
-                try MultipartFormDataBuilder.write(
-                    fields: fields,
-                    files: files,
-                    boundary: boundary,
-                    to: temporaryFileURL
-                )
-            } catch {
-                try? FileManager.default.removeItem(at: temporaryFileURL)
-                throw error
-            }
-            setContentTypeIfNeeded("multipart/form-data; boundary=\(boundary)", on: &urlRequest)
+            let temporaryFileURL = try writeMultipartBody(
+                fields: fields,
+                files: files,
+                boundary: boundary
+            )
+            // NetRunner owns the multipart Content-Type because the boundary is part of correctness.
+            setContentType("multipart/form-data; boundary=\(boundary)", on: &urlRequest, override: true)
+            setContentLength(forFileAt: temporaryFileURL, on: &urlRequest)
             return PreparedUpload(request: urlRequest, fileURL: temporaryFileURL, temporaryFileURL: temporaryFileURL)
         }
     }
 
-    private static func setContentTypeIfNeeded(_ contentType: String, on request: inout URLRequest) {
-        if request.value(forHTTPHeaderField: "Content-Type") == nil {
+    private static func writeMultipartBody(
+        fields: [String: String],
+        files: [MultipartFile],
+        boundary: String
+    ) throws -> URL {
+        let temporaryFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NetRunner-\(UUID().uuidString).upload")
+        do {
+            try MultipartFormDataBuilder.write(
+                fields: fields,
+                files: files,
+                boundary: boundary,
+                to: temporaryFileURL
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: temporaryFileURL)
+            throw error
+        }
+        return temporaryFileURL
+    }
+
+    private static func setContentType(_ contentType: String, on request: inout URLRequest, override: Bool) {
+        if override || request.value(forHTTPHeaderField: "Content-Type") == nil {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
+    }
+
+    private static func setContentLength(forFileAt fileURL: URL, on request: inout URLRequest) {
+        guard
+            let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+            let fileSize = (attributes[.size] as? NSNumber)?.int64Value
+        else {
+            return
+        }
+        request.setValue(String(fileSize), forHTTPHeaderField: "Content-Length")
     }
 
     private func allResponseInterceptorsApprove(context: RetryContext) async -> Bool {
@@ -264,7 +282,7 @@ public actor NetworkClient: NetRunner {
         return true
     }
 
-    private nonisolated func decodeData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
+    private static func decodeData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
         do {
             return try decoder.decode(T.self, from: data)
         } catch {

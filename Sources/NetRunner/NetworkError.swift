@@ -37,7 +37,7 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
         case .decodingFailed(let error):
             return "Unable to decode received data: \(error)"
         case .httpBodyNotAllowedForGET:
-            return "HTTP Body is not allowed in GET request"
+            return "HTTP body is not allowed in GET request"
         case .uploadBodyNotAllowedForGET:
             return "Upload body is not allowed in GET request"
         case .unauthorized:

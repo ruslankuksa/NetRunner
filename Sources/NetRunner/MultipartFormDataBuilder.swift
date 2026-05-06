@@ -56,7 +56,9 @@ enum MultipartFormDataBuilder {
     }
 
     private static func escape(_ value: String) -> String {
-        value.replacingOccurrences(of: "\"", with: "\\\"")
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     private static func validateHeaderMetadata(
@@ -64,7 +66,7 @@ enum MultipartFormDataBuilder {
         files: [MultipartFile],
         boundary: String
     ) throws {
-        try validateHeaderMetadataValue(boundary, name: "multipart boundary")
+        try validateBoundary(boundary)
 
         for fieldName in fields.keys {
             try validateHeaderMetadataValue(fieldName, name: "multipart field name")
@@ -83,6 +85,22 @@ enum MultipartFormDataBuilder {
         }
         guard !containsControlCharacter else {
             throw NetworkError.requestFailed("Invalid \(name): control characters are not allowed")
+        }
+    }
+
+    /// Per RFC 2046 §5.1.1, a multipart boundary is `bchars` with at most 70
+    /// characters and may not end with whitespace. We additionally reject any
+    /// space or `;` so the boundary parses unambiguously inside `Content-Type`.
+    private static func validateBoundary(_ boundary: String) throws {
+        try validateHeaderMetadataValue(boundary, name: "multipart boundary")
+
+        guard !boundary.isEmpty, boundary.count <= 70 else {
+            throw NetworkError.requestFailed("Invalid multipart boundary: must be 1–70 characters")
+        }
+
+        let illegal: Set<Character> = [" ", ";"]
+        guard !boundary.contains(where: illegal.contains) else {
+            throw NetworkError.requestFailed("Invalid multipart boundary: ' ' and ';' are not allowed")
         }
     }
 }

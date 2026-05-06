@@ -12,7 +12,7 @@ public protocol NetworkRequest {
     var baseURL: URL { get }
     var method: HTTPMethod { get }
     var endpoint: Route { get }
-    var headers: [String: String]? { get set }
+    var headers: [String: String]? { get }
     var parameters: QueryParameters? { get }
     var httpBody: Encodable? { get }
 
@@ -42,27 +42,21 @@ public extension NetworkRequest {
 
     /// Builds a `URLRequest` from this network request's properties.
     func makeURLRequest() throws -> URLRequest {
-        let urlPath = baseURL.absoluteString + endpoint.path
-        var components = URLComponents(string: urlPath)
-
-        if let parameters = parameters, !parameters.isEmpty {
-            components?.queryItems = QueryItemBuilder.buildQueryItems(from: parameters, encoding: arrayEncoding)
-        }
-
-        guard let url = components?.url else {
-            throw NetworkError.invalidURL
-        }
-
-        var request = URLRequest(url: url, method: method, headers: headers)
-        request.cachePolicy = cachePolicy
+        var request = try URLRequestBuilder.makeURLRequest(
+            baseURL: baseURL,
+            path: endpoint.path,
+            method: method,
+            headers: headers,
+            parameters: parameters,
+            arrayEncoding: arrayEncoding,
+            cachePolicy: cachePolicy
+        )
         if let httpBody {
-            if method != .get {
-                request.httpBody = try encoder.encode(httpBody)
-            } else {
+            guard method != .get else {
                 throw NetworkError.httpBodyNotAllowedForGET
             }
+            request.httpBody = try encoder.encode(httpBody)
         }
-
         return request
     }
 }

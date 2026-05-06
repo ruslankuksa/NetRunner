@@ -4,9 +4,11 @@ import Foundation
 
 // MARK: - Thread Safety
 // @unchecked Sendable is safe here because:
-// 1. Each test creates its own instance (no cross-test sharing)
-// 2. Configuration happens before the actor call (sequential)
-// 3. Assertions happen after `await` returns (happens-before barrier)
+// 1. Each test creates its own instance (no cross-test sharing).
+// 2. Stubs are configured before the first `await` and not mutated afterwards.
+// 3. Retry tests await each upload sequentially within a single Task on the
+//    `UploadTests` `@Suite(.serialized)` suite, so `capturedRequests` and the
+//    `capturedUpload*` arrays are appended-to from one logical thread at a time.
 final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     var capturedRequests: [URLRequest] = []
     var callCount: Int { capturedRequests.count }
@@ -38,6 +40,9 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     ) async throws -> (Data, URLResponse) {
         capturedRequests.append(request)
         capturedUploadFileURLs.append(fileURL)
+        // Read the upload file synchronously here so tests that assert on
+        // `capturedUploadFileData` see the bytes before NetworkClient's
+        // `defer` removes the multipart temp file.
         if let data = try? Data(contentsOf: fileURL) {
             capturedUploadFileData.append(data)
         }

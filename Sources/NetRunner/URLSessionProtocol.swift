@@ -1,8 +1,15 @@
 
 import Foundation
 
+/// Reports upload progress as bytes are sent on the wire.
+///
+/// - Parameters:
+///   - bytesSent: Cumulative bytes sent so far for the current attempt.
+///   - totalBytesExpectedToSend: Total bytes the upload expects to send, or `-1` if unknown.
 public typealias UploadProgressHandler = @Sendable (_ bytesSent: Int64, _ totalBytesExpectedToSend: Int64) -> Void
 
+/// A `URLSession`-shaped abstraction used by `NetworkClient` so consumers can
+/// inject mocks and instrumentation in tests.
 public protocol URLSessionProtocol: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)
     func upload(
@@ -39,7 +46,10 @@ extension URLSession: URLSessionProtocol {
     }
 }
 
-private final class UploadTaskProgressDelegate: NSObject, URLSessionTaskDelegate {
+// `@unchecked Sendable` is justified: the only stored property is an immutable
+// `@Sendable` closure, and `URLSession` invokes the delegate from its delegate
+// queue without us mutating any shared state.
+private final class UploadTaskProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let progress: UploadProgressHandler
 
     init(progress: @escaping UploadProgressHandler) {
