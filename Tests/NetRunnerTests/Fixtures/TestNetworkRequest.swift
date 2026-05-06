@@ -39,3 +39,34 @@ struct TestNetworkRequest: NetworkRequest {
         self.arrayEncoding = arrayEncoding
     }
 }
+
+struct TestUploadRequest: UploadRequest {
+    var baseURL: URL
+    var method: HTTPMethod
+    var endpoint: TestEndpoint
+    var headers: [String: String]?
+    var parameters: QueryParameters?
+    var uploadBody: UploadBody
+    var cachePolicy: URLRequest.CachePolicy
+    var arrayEncoding: ArrayEncoding
+
+    init(
+        baseURL: URL = URL(string: "https://example.com")!,
+        method: HTTPMethod = .post,
+        endpoint: TestEndpoint = TestEndpoint(),
+        headers: [String: String]? = nil,
+        parameters: QueryParameters? = nil,
+        uploadBody: UploadBody,
+        cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
+        arrayEncoding: ArrayEncoding = .brackets
+    ) {
+        self.baseURL = baseURL
+        self.method = method
+        self.endpoint = endpoint
+        self.headers = headers
+        self.parameters = parameters
+        self.uploadBody = uploadBody
+        self.cachePolicy = cachePolicy
+        self.arrayEncoding = arrayEncoding
+    }
+}

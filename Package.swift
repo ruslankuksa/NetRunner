@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "NetRunner",
     platforms: [
-        .macOS(.v11), .iOS(.v13), .tvOS(.v13), .watchOS(.v7)
+        .macOS(.v11), .iOS("13.4"), .tvOS("13.4"), .watchOS(.v7)
     ],
     products: [
         .library(

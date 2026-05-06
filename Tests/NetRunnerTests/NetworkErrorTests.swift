@@ -48,6 +48,7 @@ struct NetworkErrorTests {
         NetworkError.invalidResponse,
         NetworkError.decodingFailed(NSError(domain: "d", code: 1)),
         NetworkError.httpBodyNotAllowedForGET,
+        NetworkError.uploadBodyNotAllowedForGET,
         NetworkError.unauthorized,
         NetworkError.timeout,
         NetworkError.noConnectivity,

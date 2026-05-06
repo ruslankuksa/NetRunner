@@ -11,8 +11,6 @@ A zero-dependency Swift networking library built on protocol-oriented design. Al
 | tvOS | 13.0 |
 | watchOS | 7.0 |
 
-`NetworkClient` (the concrete actor) requires iOS 15 / macOS 12 / tvOS 15 / watchOS 8.
-
 ## Installation
 
 Add the package via Swift Package Manager:
@@ -63,7 +61,7 @@ struct GetUserRequest: NetworkRequest {
 ### 3. Create a client and execute
 
 ```swift
-// Simple — using NetworkClient (iOS 15+)
+// Simple — using NetworkClient
 let client = NetworkClient()
 
 let user: User = try await client.execute(request: GetUserRequest(id: "42"))
@@ -84,7 +82,6 @@ let user: User = try await APIClient().execute(request: GetUserRequest(id: "42")
 `NetworkClient` is a Swift actor that assembles all library features in one place.
 
 ```swift
-@available(iOS 15, macOS 12, tvOS 15, watchOS 8, *)
 public actor NetworkClient: NetRunner {
     public init(
         session: any URLSessionProtocol = URLSession.shared,
@@ -132,6 +129,47 @@ let client = NetworkClient(
 ```
 
 Multiple interceptors are applied left-to-right.
+
+### File uploads
+
+`NetworkClient` supports raw file uploads and `multipart/form-data` uploads with progress events. On iOS 15 / macOS 12 / tvOS 15 / watchOS 8 and newer, progress comes from `URLSessionTaskDelegate`; on older supported OS versions, `URLSession` only provides a completion progress event.
+
+```swift
+struct AvatarUpload: UploadRequest {
+    var baseURL: URL { URL(string: "https://api.example.com")! }
+    var method: HTTPMethod { .post }
+    var endpoint: UserEndpoint { .profile(id: "42") }
+    var headers: [String: String]? = ["Accept": "application/json"]
+    var parameters: QueryParameters? = nil
+    var uploadBody: UploadBody
+}
+
+let request = AvatarUpload(
+    uploadBody: .multipart(
+        fields: ["displayName": "Blob"],
+        files: [
+            MultipartFile(
+                fieldName: "avatar",
+                fileURL: avatarURL,
+                fileName: "avatar.jpg",
+                contentType: "image/jpeg"
+            )
+        ],
+        boundary: nil
+    )
+)
+
+for try await event in client.upload(request: request, responseType: User.self) {
+    switch event {
+    case .progress(let progress):
+        print(progress.fractionCompleted)
+    case .response(let user):
+        print(user)
+    }
+}
+```
+
+For APIs that expect the file as the complete request body, use `.rawFile(fileURL:contentType:)`. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`.
 
 ### Response interceptors
 
@@ -210,6 +248,7 @@ do {
 | `.invalidResponse` | Response was not an `HTTPURLResponse` |
 | `.decodingFailed(Error)` | JSON decoding failed |
 | `.httpBodyNotAllowedForGET` | `httpBody` set on a GET request |
+| `.uploadBodyNotAllowedForGET` | Upload body set on a GET request |
 | `.unauthorized` | HTTP 401 |
 | `.clientError(statusCode:)` | HTTP 400–499 (except 401) |
 | `.serverError(statusCode:)` | HTTP 500–599 |

@@ -46,7 +46,7 @@ public extension NetworkRequest {
         var components = URLComponents(string: urlPath)
 
         if let parameters = parameters, !parameters.isEmpty {
-            components?.queryItems = buildQueryItems(from: parameters, encoding: arrayEncoding)
+            components?.queryItems = QueryItemBuilder.buildQueryItems(from: parameters, encoding: arrayEncoding)
         }
 
         guard let url = components?.url else {
@@ -64,38 +64,5 @@ public extension NetworkRequest {
         }
 
         return request
-    }
-
-    private func buildQueryItems(from parameters: QueryParameters, encoding: ArrayEncoding) -> [URLQueryItem] {
-        var queryItems: [URLQueryItem] = []
-
-        for (key, value) in parameters {
-            if let array = value as? [Any] {
-                // Handle array values based on encoding type
-                switch encoding {
-                case .brackets:
-                    // key[]=1&key[]=2&key[]=3
-                    for item in array {
-                        queryItems.append(URLQueryItem(name: key, value: "\(item)"))
-                    }
-                case .noBrackets:
-                    // Remove brackets if present in key
-                    let cleanKey = key.replacingOccurrences(of: "[]", with: "")
-                    for item in array {
-                        queryItems.append(URLQueryItem(name: cleanKey, value: "\(item)"))
-                    }
-                case .commaSeparated:
-                    // key=1,2,3
-                    let cleanKey = key.replacingOccurrences(of: "[]", with: "")
-                    let commaSeparatedValue = array.map { "\($0)" }.joined(separator: ",")
-                    queryItems.append(URLQueryItem(name: cleanKey, value: commaSeparatedValue))
-                }
-            } else {
-                // Handle single values normally
-                queryItems.append(URLQueryItem(name: key, value: "\(value)"))
-            }
-        }
-
-        return queryItems
     }
 }

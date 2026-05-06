@@ -1,7 +1,6 @@
 
 import Foundation
 
-@available(iOS 15, macOS 12, tvOS 15, watchOS 8, *)
 public actor NetworkClient: NetRunner {
 
     private let session: any URLSessionProtocol
@@ -32,6 +31,53 @@ public actor NetworkClient: NetRunner {
         _ = try await performRequest(request)
     }
 
+    public nonisolated func upload<T: Decodable>(
+        request: any UploadRequest,
+        responseType: T.Type = T.self
+    ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
+        let decoder = request.decoder
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let data = try await performUpload(request) { progress in
+                        continuation.yield(.progress(progress))
+                    }
+                    let response = try decodeData(data, decoder: decoder) as T
+                    continuation.yield(.response(response))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    public nonisolated func upload(
+        request: any UploadRequest
+    ) -> AsyncThrowingStream<UploadEvent<Void>, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    _ = try await performUpload(request) { progress in
+                        continuation.yield(.progress(progress))
+                    }
+                    continuation.yield(.response(()))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
     public nonisolated func validate(_ response: URLResponse) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.invalidResponse
@@ -49,6 +95,12 @@ public actor NetworkClient: NetRunner {
         default:
             throw NetworkError.requestFailed(HTTPURLResponse.localizedString(forStatusCode: statusCode))
         }
+    }
+
+    private struct PreparedUpload {
+        let request: URLRequest
+        let fileURL: URL
+        let temporaryFileURL: URL?
     }
 
     // MARK: - Private
@@ -99,6 +151,110 @@ public actor NetworkClient: NetRunner {
         }
     }
 
+    private func performUpload(
+        _ uploadRequest: any UploadRequest,
+        progress: @escaping @Sendable (UploadProgress) -> Void
+    ) async throws -> Data {
+        let preparedUpload = try await Task.detached(priority: .utility) {
+            try Self.prepareUpload(uploadRequest)
+        }.value
+        defer {
+            if let temporaryFileURL = preparedUpload.temporaryFileURL {
+                try? FileManager.default.removeItem(at: temporaryFileURL)
+            }
+        }
+
+        var urlRequest = preparedUpload.request
+        for interceptor in requestInterceptors {
+            urlRequest = try await interceptor.intercept(urlRequest)
+        }
+
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let attemptIndex = attempt
+            do {
+                let (data, response) = try await session.upload(
+                    for: urlRequest,
+                    fromFile: preparedUpload.fileURL
+                ) { bytesSent, totalBytesExpectedToSend in
+                    progress(
+                        UploadProgress(
+                            bytesSent: bytesSent,
+                            totalBytesExpectedToSend: totalBytesExpectedToSend,
+                            attemptIndex: attemptIndex
+                        )
+                    )
+                }
+                try validate(response)
+                return data
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                let networkError = error as? NetworkError ?? NetworkError(error)
+                let shouldRetryByPolicy = attempt < retryPolicy.maxAttempts
+                    && retryPolicy.isRetryable(error: networkError)
+
+                guard shouldRetryByPolicy else {
+                    throw networkError
+                }
+
+                let context = RetryContext(
+                    request: urlRequest,
+                    attemptIndex: attempt,
+                    error: networkError
+                )
+                let allApprove = await allResponseInterceptorsApprove(context: context)
+                guard allApprove else {
+                    throw networkError
+                }
+
+                let delaySeconds = retryPolicy.delay(forAttempt: attempt)
+                if delaySeconds > 0 {
+                    try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                }
+                attempt += 1
+            }
+        }
+    }
+
+    private static func prepareUpload(_ uploadRequest: any UploadRequest) throws -> PreparedUpload {
+        guard uploadRequest.method != .get else {
+            throw NetworkError.uploadBodyNotAllowedForGET
+        }
+
+        var urlRequest = try uploadRequest.makeURLRequest()
+        switch uploadRequest.uploadBody {
+        case .rawFile(let fileURL, let contentType):
+            setContentTypeIfNeeded(contentType ?? "application/octet-stream", on: &urlRequest)
+            return PreparedUpload(request: urlRequest, fileURL: fileURL, temporaryFileURL: nil)
+
+        case .multipart(let fields, let files, let boundary):
+            let boundary = boundary ?? "Boundary-\(UUID().uuidString)"
+            let temporaryFileURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("NetRunner-\(UUID().uuidString).upload")
+            do {
+                try MultipartFormDataBuilder.write(
+                    fields: fields,
+                    files: files,
+                    boundary: boundary,
+                    to: temporaryFileURL
+                )
+            } catch {
+                try? FileManager.default.removeItem(at: temporaryFileURL)
+                throw error
+            }
+            setContentTypeIfNeeded("multipart/form-data; boundary=\(boundary)", on: &urlRequest)
+            return PreparedUpload(request: urlRequest, fileURL: temporaryFileURL, temporaryFileURL: temporaryFileURL)
+        }
+    }
+
+    private static func setContentTypeIfNeeded(_ contentType: String, on request: inout URLRequest) {
+        if request.value(forHTTPHeaderField: "Content-Type") == nil {
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+    }
+
     private func allResponseInterceptorsApprove(context: RetryContext) async -> Bool {
         for interceptor in responseInterceptors {
             if await !interceptor.shouldRetry(context: context) {
@@ -108,7 +264,7 @@ public actor NetworkClient: NetRunner {
         return true
     }
 
-    private func decodeData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
+    private nonisolated func decodeData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
