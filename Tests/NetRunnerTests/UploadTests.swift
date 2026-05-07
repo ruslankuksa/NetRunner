@@ -10,6 +10,54 @@ import Foundation
 @Suite(.serialized)
 struct UploadTests {
 
+    // MARK: - NetRunner default uploads
+
+    @Test func netRunnerDefaultDecodedUploadIsAvailableForCustomConformer() async throws {
+        struct Payload: Decodable { let id: Int }
+        struct APIClient: NetRunner {}
+
+        URLProtocol.registerClass(NetRunnerUploadURLProtocol.self)
+        defer { URLProtocol.unregisterClass(NetRunnerUploadURLProtocol.self) }
+
+        let client = APIClient()
+        let request = TestUploadRequest(
+            baseURL: URL(string: "https://netrunner-upload.test")!,
+            method: .post,
+            endpoint: TestEndpoint("/decoded"),
+            uploadBody: .data(data: Data("payload".utf8), contentType: "text/plain")
+        )
+
+        let events = try await collect(client.upload(request: request, responseType: Payload.self))
+
+        guard case .response(let payload) = events.last else {
+            Issue.record("Expected final event to be decoded response")
+            return
+        }
+        #expect(payload.id == 42)
+    }
+
+    @Test func netRunnerDefaultVoidUploadIsAvailableForCustomConformer() async throws {
+        struct APIClient: NetRunner {}
+
+        URLProtocol.registerClass(NetRunnerUploadURLProtocol.self)
+        defer { URLProtocol.unregisterClass(NetRunnerUploadURLProtocol.self) }
+
+        let client = APIClient()
+        let request = TestUploadRequest(
+            baseURL: URL(string: "https://netrunner-upload.test")!,
+            method: .post,
+            endpoint: TestEndpoint("/void"),
+            uploadBody: .data(data: Data("payload".utf8), contentType: nil)
+        )
+
+        let events = try await collect(client.upload(request: request))
+
+        guard case .response = events.last else {
+            Issue.record("Expected final event to be Void response")
+            return
+        }
+    }
+
     // MARK: - Data uploads
 
     @Test func dataUploadWritesBytesToTemporaryFileAndDecodesResponse() async throws {
@@ -494,4 +542,43 @@ struct UploadTests {
                 .filter { $0.hasPrefix("NetRunner-") && $0.hasSuffix(".upload") }
         )
     }
+}
+
+private final class NetRunnerUploadURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "netrunner-upload.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        let data: Data
+        switch url.path {
+        case "/decoded":
+            data = #"{"id":42}"#.data(using: .utf8)!
+        default:
+            data = Data()
+        }
+
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if !data.isEmpty {
+            client?.urlProtocol(self, didLoad: data)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

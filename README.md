@@ -132,7 +132,7 @@ Multiple interceptors are applied left-to-right.
 
 ### File uploads
 
-`NetworkClient` supports raw file uploads and `multipart/form-data` uploads with progress events. On iOS 15 / macOS 12 / tvOS 15 / watchOS 8 and newer, progress comes from `URLSessionTaskDelegate`; on older supported OS versions, `URLSession` only provides a completion progress event.
+`NetworkClient` and custom `NetRunner` conformers support raw data, raw file, and `multipart/form-data` uploads with progress events. On iOS 15 / macOS 12 / tvOS 15 / watchOS 8 and newer, progress comes from `URLSessionTaskDelegate`; on older supported OS versions, `URLSession` only provides a completion progress event.
 
 ```swift
 struct AvatarUpload: UploadRequest {
@@ -175,6 +175,8 @@ for try await event in client.upload(request: request, responseType: User.self) 
 ```
 
 For APIs that expect the complete request body directly, use `.data(data:contentType:)` for in-memory bytes or `.rawFile(fileURL:contentType:)` for a local file. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`.
+
+Custom `NetRunner` conformers get default upload implementations backed by `URLSession.shared`. Use `NetworkClient` when uploads need injected sessions, retry policies, or request/response interceptors.
 
 ### Response interceptors
 
