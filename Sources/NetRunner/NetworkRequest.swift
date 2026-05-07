@@ -4,15 +4,16 @@ import Foundation
 /// Query parameters for a network request.
 public typealias QueryParameters = [String: Any]
 
+/// HTTP header fields keyed by header name.
+public typealias HTTPHeaders = [String: String]
+
 /// Describes a single HTTP request: base URL, endpoint path, method, headers,
 /// query parameters, and optional body.
 public protocol NetworkRequest {
-    associatedtype Route: Endpoint
-
     var baseURL: URL { get }
     var method: HTTPMethod { get }
-    var endpoint: Route { get }
-    var headers: [String: String]? { get }
+    var endpoint: any Endpoint { get }
+    var headers: HTTPHeaders? { get }
     var parameters: QueryParameters? { get }
     var httpBody: Encodable? { get }
 

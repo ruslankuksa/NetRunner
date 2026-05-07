@@ -13,6 +13,21 @@ struct NetworkRequestTests {
         #expect(urlReq.url?.absoluteString == "https://api.example.com/users")
     }
 
+    @Test func makeURLRequestAcceptsDifferentEndpointTypes() throws {
+        struct SearchEndpoint: Endpoint {
+            var path: String { "/search" }
+        }
+
+        let req = TestNetworkRequest(
+            baseURL: URL(string: "https://api.example.com")!,
+            endpoint: SearchEndpoint()
+        )
+
+        let urlReq = try req.makeURLRequest()
+
+        #expect(urlReq.url?.absoluteString == "https://api.example.com/search")
+    }
+
     @Test func makeURLRequestBaseURLValidatesAtDeclarationSite() throws {
         // With baseURL as URL type, invalid URLs are caught at construction time
         // rather than at request build time — URL(string:) returns nil for invalid strings

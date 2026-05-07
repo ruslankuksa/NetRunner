@@ -47,13 +47,13 @@ enum UserEndpoint: Endpoint {
 struct GetUserRequest: NetworkRequest {
     var baseURL: URL { URL(string: "https://api.example.com")! }
     var method: HTTPMethod { .get }
-    var endpoint: UserEndpoint
-    var headers: [String: String]? = ["Accept": "application/json"]
+    var endpoint: any Endpoint
+    var headers: HTTPHeaders? = ["Accept": "application/json"]
     var parameters: QueryParameters? = nil
     var httpBody: Encodable? = nil
 
     init(id: String) {
-        endpoint = .profile(id: id)
+        endpoint = UserEndpoint.profile(id: id)
     }
 }
 ```
@@ -138,10 +138,15 @@ Multiple interceptors are applied left-to-right.
 struct AvatarUpload: UploadRequest {
     var baseURL: URL { URL(string: "https://api.example.com")! }
     var method: HTTPMethod { .post }
-    var endpoint: UserEndpoint { .profile(id: "42") }
-    var headers: [String: String]? = ["Accept": "application/json"]
+    var endpoint: any Endpoint
+    var headers: HTTPHeaders? = ["Accept": "application/json"]
     var parameters: QueryParameters? = nil
     var uploadBody: UploadBody
+
+    init(endpoint: any Endpoint = UserEndpoint.profile(id: "42"), uploadBody: UploadBody) {
+        self.endpoint = endpoint
+        self.uploadBody = uploadBody
+    }
 }
 
 let request = AvatarUpload(
@@ -169,7 +174,7 @@ for try await event in client.upload(request: request, responseType: User.self) 
 }
 ```
 
-For APIs that expect the file as the complete request body, use `.rawFile(fileURL:contentType:)`. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`.
+For APIs that expect the complete request body directly, use `.data(data:contentType:)` for in-memory bytes or `.rawFile(fileURL:contentType:)` for a local file. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`.
 
 ### Response interceptors
 

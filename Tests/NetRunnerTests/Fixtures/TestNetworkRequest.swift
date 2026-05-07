@@ -12,8 +12,8 @@ struct TestEndpoint: Endpoint {
 struct TestNetworkRequest: NetworkRequest {
     var baseURL: URL
     var method: HTTPMethod
-    var endpoint: TestEndpoint
-    var headers: [String: String]?
+    var endpoint: any Endpoint
+    var headers: HTTPHeaders?
     var parameters: QueryParameters?
     var httpBody: Encodable?
     var cachePolicy: URLRequest.CachePolicy
@@ -22,8 +22,8 @@ struct TestNetworkRequest: NetworkRequest {
     init(
         baseURL: URL = URL(string: "https://example.com")!,
         method: HTTPMethod = .get,
-        endpoint: TestEndpoint = TestEndpoint(),
-        headers: [String: String]? = nil,
+        endpoint: any Endpoint = TestEndpoint(),
+        headers: HTTPHeaders? = nil,
         parameters: QueryParameters? = nil,
         httpBody: Encodable? = nil,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
@@ -40,11 +40,13 @@ struct TestNetworkRequest: NetworkRequest {
     }
 }
 
-struct TestUploadRequest: UploadRequest {
+// @unchecked Sendable is safe for this fixture: tests configure all stored
+// values before passing the request into async upload code.
+struct TestUploadRequest: UploadRequest, @unchecked Sendable {
     var baseURL: URL
     var method: HTTPMethod
-    var endpoint: TestEndpoint
-    var headers: [String: String]?
+    var endpoint: any Endpoint
+    var headers: HTTPHeaders?
     var parameters: QueryParameters?
     var uploadBody: UploadBody
     var cachePolicy: URLRequest.CachePolicy
@@ -53,8 +55,8 @@ struct TestUploadRequest: UploadRequest {
     init(
         baseURL: URL = URL(string: "https://example.com")!,
         method: HTTPMethod = .post,
-        endpoint: TestEndpoint = TestEndpoint(),
-        headers: [String: String]? = nil,
+        endpoint: any Endpoint = TestEndpoint(),
+        headers: HTTPHeaders? = nil,
         parameters: QueryParameters? = nil,
         uploadBody: UploadBody,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,

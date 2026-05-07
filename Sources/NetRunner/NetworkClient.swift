@@ -217,6 +217,12 @@ public actor NetworkClient: NetRunner {
 
         var urlRequest = try uploadRequest.makeURLRequest()
         switch uploadRequest.uploadBody {
+        case .data(data: let data, contentType: let contentType):
+            let temporaryFileURL = try writeUploadData(data)
+            setContentType(contentType ?? "application/octet-stream", on: &urlRequest, override: false)
+            setContentLength(forFileAt: temporaryFileURL, on: &urlRequest)
+            return PreparedUpload(request: urlRequest, fileURL: temporaryFileURL, temporaryFileURL: temporaryFileURL)
+
         case .rawFile(let fileURL, let contentType):
             setContentType(contentType ?? "application/octet-stream", on: &urlRequest, override: false)
             setContentLength(forFileAt: fileURL, on: &urlRequest)
@@ -234,6 +240,18 @@ public actor NetworkClient: NetRunner {
             setContentLength(forFileAt: temporaryFileURL, on: &urlRequest)
             return PreparedUpload(request: urlRequest, fileURL: temporaryFileURL, temporaryFileURL: temporaryFileURL)
         }
+    }
+
+    private static func writeUploadData(_ data: Data) throws -> URL {
+        let temporaryFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NetRunner-\(UUID().uuidString).upload")
+        do {
+            try data.write(to: temporaryFileURL)
+        } catch {
+            try? FileManager.default.removeItem(at: temporaryFileURL)
+            throw error
+        }
+        return temporaryFileURL
     }
 
     private static func writeMultipartBody(

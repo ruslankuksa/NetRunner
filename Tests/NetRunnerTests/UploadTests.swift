@@ -10,6 +10,87 @@ import Foundation
 @Suite(.serialized)
 struct UploadTests {
 
+    // MARK: - Data uploads
+
+    @Test func dataUploadWritesBytesToTemporaryFileAndDecodesResponse() async throws {
+        struct Payload: Decodable { let id: Int }
+
+        let json = #"{"id":12}"#.data(using: .utf8)!
+        let session = MockURLSession()
+        session.stub(statusCode: 200)
+        session.stubbedData = json
+        session.uploadProgressEvents = [(5, 11), (11, 11)]
+        let client = NetworkClient(session: session)
+        let request = TestUploadRequest(
+            method: .post,
+            headers: ["X-Trace": "abc"],
+            uploadBody: .data(data: Data("hello world".utf8), contentType: "text/plain")
+        )
+
+        let events = try await collect(client.upload(request: request, responseType: Payload.self))
+
+        let temporaryUploadFile = try #require(session.capturedUploadFileURLs.first)
+        let uploadedData = try #require(session.capturedUploadFileData.first)
+        #expect(uploadedData == Data("hello world".utf8))
+        #expect(session.capturedRequests.first?.httpMethod == "POST")
+        #expect(session.capturedRequests.first?.value(forHTTPHeaderField: "X-Trace") == "abc")
+        #expect(session.capturedRequests.first?.value(forHTTPHeaderField: "Content-Type") == "text/plain")
+        #expect(session.capturedRequests.first?.value(forHTTPHeaderField: "Content-Length") == "11")
+        #expect(!FileManager.default.fileExists(atPath: temporaryUploadFile.path))
+
+        guard case .progress(let firstProgress) = events[0] else {
+            Issue.record("Expected first event to be upload progress")
+            return
+        }
+        #expect(firstProgress.bytesSent == 5)
+        #expect(firstProgress.totalBytesExpectedToSend == 11)
+        #expect(firstProgress.fractionCompleted == 5.0 / 11.0)
+        #expect(firstProgress.attemptIndex == 0)
+
+        guard case .response(let payload) = events.last else {
+            Issue.record("Expected final event to be decoded response")
+            return
+        }
+        #expect(payload.id == 12)
+    }
+
+    @Test func dataUploadDefaultsToOctetStreamContentType() async throws {
+        let session = MockURLSession()
+        session.stub(statusCode: 204)
+        let client = NetworkClient(session: session)
+        let request = TestUploadRequest(
+            method: .put,
+            uploadBody: .data(data: Data("bytes".utf8), contentType: nil)
+        )
+
+        let events = try await collect(client.upload(request: request))
+
+        #expect(session.capturedUploadFileData == [Data("bytes".utf8)])
+        #expect(session.capturedRequests.first?.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
+        #expect(session.capturedRequests.first?.value(forHTTPHeaderField: "Content-Length") == "5")
+        guard case .response = events.last else {
+            Issue.record("Expected final event to be Void response")
+            return
+        }
+    }
+
+    @Test func dataUploadTemporaryFileIsRemovedAfterFailure() async throws {
+        let session = MockURLSession()
+        session.stub(statusCode: 503)
+        let client = NetworkClient(session: session)
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .data(data: Data("failed-bytes".utf8), contentType: nil)
+        )
+
+        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+            _ = try await collect(client.upload(request: request))
+        }
+
+        let temporaryUploadFile = try #require(session.capturedUploadFileURLs.first)
+        #expect(!FileManager.default.fileExists(atPath: temporaryUploadFile.path))
+    }
+
     // MARK: - Raw file uploads
 
     @Test func rawFileUploadSendsFileURLAndDecodesResponse() async throws {

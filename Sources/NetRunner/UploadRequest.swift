@@ -4,12 +4,10 @@ import Foundation
 /// Describes a file upload request: base URL, endpoint path, method, headers,
 /// query parameters, and an `UploadBody` source.
 public protocol UploadRequest: Sendable {
-    associatedtype Route: Endpoint
-
     var baseURL: URL { get }
     var method: HTTPMethod { get }
-    var endpoint: Route { get }
-    var headers: [String: String]? { get }
+    var endpoint: any Endpoint { get }
+    var headers: HTTPHeaders? { get }
     var parameters: QueryParameters? { get }
     var uploadBody: UploadBody { get }
 
@@ -49,6 +47,8 @@ public extension UploadRequest {
 
 /// The body source for an upload request.
 public enum UploadBody: Sendable {
+    /// Uploads in-memory bytes as the complete HTTP request body.
+    case data(data: Data, contentType: String?)
     /// Uploads a file as the complete HTTP request body.
     case rawFile(fileURL: URL, contentType: String?)
     /// Uploads fields and files using `multipart/form-data`.

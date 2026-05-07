@@ -8,7 +8,7 @@ internal enum URLRequestBuilder {
         baseURL: URL,
         path: String,
         method: HTTPMethod,
-        headers: [String: String]?,
+        headers: HTTPHeaders?,
         parameters: QueryParameters?,
         arrayEncoding: ArrayEncoding,
         cachePolicy: URLRequest.CachePolicy
