@@ -1,6 +1,8 @@
 
 import Foundation
 
+/// A concrete `NetRunner` actor that executes requests with an injected session,
+/// retry policy, and request/response interceptors.
 public actor NetworkClient: NetRunner {
 
     private let session: any URLSessionProtocol
@@ -8,6 +10,13 @@ public actor NetworkClient: NetRunner {
     private let requestInterceptors: [any RequestInterceptor]
     private let responseInterceptors: [any ResponseInterceptor]
 
+    /// Creates a network client.
+    ///
+    /// - Parameters:
+    ///   - session: The URL session abstraction used to execute data and upload requests.
+    ///   - retryPolicy: The retry policy applied to retryable HTTP and transport failures.
+    ///   - requestInterceptors: Interceptors applied before each request attempt.
+    ///   - responseInterceptors: Interceptors that approve or veto retry attempts.
     public init(
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
@@ -22,15 +31,18 @@ public actor NetworkClient: NetRunner {
 
     // MARK: - NetRunner conformance
 
+    /// Executes a request and decodes its successful response body.
     public func execute<T: Decodable>(request: any NetworkRequest) async throws -> T {
         let data = try await performRequest(request)
         return try Self.decodeData(data, decoder: request.decoder)
     }
 
+    /// Executes a request that does not require a decoded response body.
     public func send(request: any NetworkRequest) async throws {
         _ = try await performRequest(request)
     }
 
+    /// Uploads a body and decodes the successful response body.
     public nonisolated func upload<T: Decodable>(
         request: any UploadRequest,
         responseType: T.Type = T.self
@@ -41,76 +53,39 @@ public actor NetworkClient: NetRunner {
         }
     }
 
+    /// Uploads a body without decoding a response body.
     public nonisolated func upload(
         request: any UploadRequest
     ) -> AsyncThrowingStream<UploadEvent<Void>, Error> {
         makeUploadStream(request: request) { _ in () }
     }
 
+    /// Validates an HTTP response using NetRunner's default status-code mapping.
     public nonisolated func validate(_ response: URLResponse) throws {
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        let statusCode = httpResponse.statusCode
-        switch statusCode {
-        case 200..<300:
-            return
-        case 401:
-            throw NetworkError.unauthorized
-        case 400..<500:
-            throw NetworkError.clientError(statusCode: statusCode)
-        case 500..<600:
-            throw NetworkError.serverError(statusCode: statusCode)
-        default:
-            throw NetworkError.requestFailed(HTTPURLResponse.localizedString(forStatusCode: statusCode))
-        }
+        try HTTPResponseValidator.validate(response)
     }
 
     // MARK: - Private
 
     private func performRequest(_ networkRequest: any NetworkRequest) async throws -> Data {
-        var urlRequest = try networkRequest.makeURLRequest()
+        let baseRequest = try networkRequest.makeURLRequest()
 
-        for interceptor in requestInterceptors {
-            urlRequest = try await interceptor.intercept(urlRequest)
-        }
-
-        var attempt = 0
-        while true {
-            try Task.checkCancellation()
-            do {
-                let (data, response) = try await session.data(for: urlRequest)
-                try validate(response)
-                return data
-            } catch let networkError as NetworkError {
-                let shouldRetryByPolicy = attempt < retryPolicy.maxAttempts
-                    && retryPolicy.isRetryable(error: networkError)
-
-                guard shouldRetryByPolicy else {
-                    throw networkError
-                }
-
-                let context = RetryContext(
-                    request: urlRequest,
-                    attemptIndex: attempt,
-                    error: networkError
-                )
-                let allApprove = await allResponseInterceptorsApprove(context: context)
-                guard allApprove else {
-                    throw networkError
-                }
-
-                let delaySeconds = retryPolicy.delay(forAttempt: attempt)
-                if delaySeconds > 0 {
-                    try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
-                }
-                attempt += 1
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                throw NetworkError(error)
+        return try await performWithRetry(
+            makeRequest: {
+                try await requestAfterInterceptors(baseRequest)
+            },
+            operation: { urlRequest, _ in
+                try await session.data(for: urlRequest)
             }
+        )
+    }
+
+    private func requestAfterInterceptors(_ request: URLRequest) async throws -> URLRequest {
+        var interceptedRequest = request
+        for interceptor in requestInterceptors {
+            interceptedRequest = try await interceptor.intercept(interceptedRequest)
         }
+        return interceptedRequest
     }
 
     private nonisolated func makeUploadStream<T>(
@@ -148,17 +123,14 @@ public actor NetworkClient: NetRunner {
             UploadRequestPreparer.removeTemporaryFile(for: preparedUpload)
         }
 
-        var urlRequest = preparedUpload.request
-        for interceptor in requestInterceptors {
-            urlRequest = try await interceptor.intercept(urlRequest)
-        }
+        let baseRequest = preparedUpload.request
 
-        var attempt = 0
-        while true {
-            try Task.checkCancellation()
-            let attemptIndex = attempt
-            do {
-                let (data, response) = try await session.upload(
+        return try await performWithRetry(
+            makeRequest: {
+                try await requestAfterInterceptors(baseRequest)
+            },
+            operation: { urlRequest, attemptIndex in
+                try await session.upload(
                     for: urlRequest,
                     fromFile: preparedUpload.fileURL
                 ) { bytesSent, totalBytesExpectedToSend in
@@ -170,13 +142,27 @@ public actor NetworkClient: NetRunner {
                         )
                     )
                 }
+            }
+        )
+    }
+
+    private func performWithRetry(
+        makeRequest: () async throws -> URLRequest,
+        operation: (URLRequest, Int) async throws -> (Data, URLResponse)
+    ) async throws -> Data {
+        var attemptIndex = 0
+        while true {
+            try Task.checkCancellation()
+            let urlRequest = try await makeRequest()
+            do {
+                let (data, response) = try await operation(urlRequest, attemptIndex)
                 try validate(response)
                 return data
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 let networkError = error as? NetworkError ?? NetworkError(error)
-                let shouldRetryByPolicy = attempt < retryPolicy.maxAttempts
+                let shouldRetryByPolicy = attemptIndex < retryPolicy.maxAttempts
                     && retryPolicy.isRetryable(error: networkError)
 
                 guard shouldRetryByPolicy else {
@@ -185,7 +171,7 @@ public actor NetworkClient: NetRunner {
 
                 let context = RetryContext(
                     request: urlRequest,
-                    attemptIndex: attempt,
+                    attemptIndex: attemptIndex,
                     error: networkError
                 )
                 let allApprove = await allResponseInterceptorsApprove(context: context)
@@ -193,12 +179,16 @@ public actor NetworkClient: NetRunner {
                     throw networkError
                 }
 
-                let delaySeconds = retryPolicy.delay(forAttempt: attempt)
-                if delaySeconds > 0 {
-                    try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
-                }
-                attempt += 1
+                try await sleepBeforeRetry(attempt: attemptIndex)
+                attemptIndex += 1
             }
+        }
+    }
+
+    private func sleepBeforeRetry(attempt: Int) async throws {
+        let delaySeconds = retryPolicy.delay(forAttempt: attempt)
+        if delaySeconds > 0 {
+            try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
         }
     }
 

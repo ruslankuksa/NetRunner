@@ -108,6 +108,30 @@ struct NetworkClientTests {
         #expect(session.callCount == 1, "Client errors should not be retried")
     }
 
+    @Test func retryableTransportFailureRetriesRequests() async {
+        let session = MockURLSession()
+        session.stubbedError = URLError(.timedOut)
+        let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
+
+        await #expect(throws: NetworkError.timeout) {
+            try await client.send(request: TestNetworkRequest())
+        }
+
+        #expect(session.callCount == 2, "1 initial + 1 retry = 2")
+    }
+
+    @Test func noConnectivityTransportFailureRetriesRequests() async {
+        let session = MockURLSession()
+        session.stubbedError = URLError(.notConnectedToInternet)
+        let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
+
+        await #expect(throws: NetworkError.noConnectivity) {
+            try await client.send(request: TestNetworkRequest())
+        }
+
+        #expect(session.callCount == 2, "1 initial + 1 retry = 2")
+    }
+
     // MARK: - ResponseInterceptor veto
 
     @Test func retryVetoedByResponseInterceptorDoesNotRetry() async {
@@ -125,6 +149,30 @@ struct NetworkClientTests {
 
         #expect(session.callCount == 1, "Interceptor vetoed — no retries")
         #expect(interceptor.callCount == 1)
+    }
+
+    @Test func requestInterceptorRunsForEachRetryAttempt() async {
+        let session = stubbedSession(statusCode: 503)
+        let store = RetryTokenStore(token: "initial")
+        let requestInterceptor = TokenHeaderInterceptor(store: store)
+        let responseInterceptor = RefreshTokenRetryInterceptor(store: store)
+        let client = makeClient(
+            session: session,
+            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
+            requestInterceptors: [requestInterceptor],
+            responseInterceptors: [responseInterceptor]
+        )
+
+        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+            try await client.send(request: TestNetworkRequest())
+        }
+
+        let authorizationHeaders = session.capturedRequests.map {
+            $0.value(forHTTPHeaderField: "Authorization")
+        }
+        #expect(requestInterceptor.interceptCallCount == 2)
+        #expect(responseInterceptor.callCount == 1)
+        #expect(authorizationHeaders == ["Bearer initial", "Bearer refreshed"])
     }
 
     // MARK: - RequestInterceptor chain order

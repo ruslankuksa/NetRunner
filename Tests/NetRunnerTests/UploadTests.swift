@@ -483,6 +483,38 @@ struct UploadTests {
         #expect(session.capturedUploadFileURLs == [uploadFile, uploadFile])
     }
 
+    @Test func requestInterceptorRunsForEachUploadRetryAttempt() async throws {
+        let uploadFile = try makeTemporaryFile(contents: "raw-bytes")
+        defer { try? FileManager.default.removeItem(at: uploadFile) }
+
+        let session = MockURLSession()
+        session.stub(statusCode: 503)
+        let store = RetryTokenStore(token: "initial")
+        let requestInterceptor = TokenHeaderInterceptor(store: store)
+        let responseInterceptor = RefreshTokenRetryInterceptor(store: store)
+        let client = NetworkClient(
+            session: session,
+            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
+            requestInterceptors: [requestInterceptor],
+            responseInterceptors: [responseInterceptor]
+        )
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .rawFile(fileURL: uploadFile, contentType: nil)
+        )
+
+        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+            _ = try await collect(client.upload(request: request))
+        }
+
+        let authorizationHeaders = session.capturedRequests.map {
+            $0.value(forHTTPHeaderField: "Authorization")
+        }
+        #expect(requestInterceptor.interceptCallCount == 2)
+        #expect(responseInterceptor.callCount == 1)
+        #expect(authorizationHeaders == ["Bearer initial", "Bearer refreshed"])
+    }
+
     // MARK: - Helpers
 
     private func collect<Response>(
