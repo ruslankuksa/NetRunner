@@ -9,6 +9,12 @@ public final class NetworkPathConnectivityMonitor:
     @unchecked Sendable
 {
     private let implementation: any NetworkPathConnectivityMonitorImplementation
+    
+    public var currentConnectivityState: ConnectivityState? {
+        get async {
+            await implementation.currentConnectivityState
+        }
+    }
 
     public init(
         monitor: NWPathMonitor = NWPathMonitor(),
@@ -31,12 +37,6 @@ public final class NetworkPathConnectivityMonitor:
 
     public func waitForConnectivityRestoration(timeout: TimeInterval?) async throws {
         try await implementation.waitForConnectivityRestoration(timeout: timeout)
-    }
-
-    public var currentConnectivityState: ConnectivityState? {
-        get async {
-            await implementation.currentConnectivityState
-        }
     }
 
     public func connectivityStates() -> AsyncStream<ConnectivityState> {

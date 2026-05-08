@@ -12,6 +12,12 @@ final class PathUpdateHandlerConnectivityMonitor:
     private let lock = NSLock()
     private var isStarted = false
     private var isCancelled = false
+    
+    var currentConnectivityState: ConnectivityState? {
+        get async {
+            stateStore.currentState
+        }
+    }
 
     init(monitor: NWPathMonitor, queue: DispatchQueue) {
         self.monitor = monitor
@@ -37,12 +43,6 @@ final class PathUpdateHandlerConnectivityMonitor:
         try checkNotCancelled()
         startIfNeeded()
         try await waiterStore.waitForConnectivityRestoration(timeout: timeout)
-    }
-
-    var currentConnectivityState: ConnectivityState? {
-        get async {
-            stateStore.currentState
-        }
     }
 
     func connectivityStates() -> AsyncStream<ConnectivityState> {
