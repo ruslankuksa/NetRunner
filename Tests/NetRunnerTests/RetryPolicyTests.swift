@@ -45,6 +45,26 @@ struct RetryPolicyTests {
         #expect(policy.delay(forAttempt: 2) == 0)
     }
 
+    // MARK: - retryable methods
+
+    @Test func defaultRetryableMethodsAreIdempotent() {
+        #expect(HTTPMethod.defaultRetryableMethods == [.get, .put, .delete])
+    }
+
+    @Test func fixedRetryPolicyUsesDefaultRetryableMethods() {
+        let policy = RetryPolicy.fixed(maxAttempts: 1, delay: 0)
+        #expect(policy.retryableMethods == HTTPMethod.defaultRetryableMethods)
+    }
+
+    @Test func exponentialRetryPolicyUsesCustomRetryableMethods() {
+        let policy = RetryPolicy.exponential(
+            maxAttempts: 1,
+            baseDelay: 0,
+            retryableMethods: [.post]
+        )
+        #expect(policy.retryableMethods == [.post])
+    }
+
     // MARK: - isRetryable
 
     @Test(arguments: [
@@ -59,5 +79,14 @@ struct RetryPolicyTests {
     func isRetryable(error: NetworkError, expected: Bool) {
         let policy = RetryPolicy.fixed(maxAttempts: 3, delay: 0)
         #expect(policy.isRetryable(error: error) == expected)
+    }
+
+    @Test func isRetryableConsidersHTTPMethod() {
+        let policy = RetryPolicy.fixed(maxAttempts: 1, delay: 0)
+
+        #expect(policy.isRetryable(error: .timeout, method: .get))
+        #expect(!policy.isRetryable(error: .timeout, method: .post))
+        #expect(!policy.isRetryable(error: .timeout, method: nil))
+        #expect(!policy.isRetryable(error: .clientError(statusCode: 404), method: .get))
     }
 }

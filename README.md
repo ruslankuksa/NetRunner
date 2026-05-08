@@ -6,9 +6,9 @@ A zero-dependency Swift networking library built on protocol-oriented design. Al
 
 | Platform | Minimum |
 |----------|---------|
-| iOS | 13.0 |
+| iOS | 13.4 |
 | macOS | 11.0 |
-| tvOS | 13.0 |
+| tvOS | 13.4 |
 | watchOS | 7.0 |
 
 ## Installation
@@ -67,7 +67,7 @@ let client = NetworkClient()
 let user: User = try await client.execute(request: GetUserRequest(id: "42"))
 ```
 
-Or conform your own type to `NetRunner` (iOS 13+):
+Or conform your own type to `NetRunner` (iOS 13.4+):
 
 ```swift
 struct APIClient: NetRunner {}
@@ -87,7 +87,9 @@ public actor NetworkClient: NetRunner {
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
         requestInterceptors: [any RequestInterceptor] = [],
-        responseInterceptors: [any ResponseInterceptor] = []
+        responseInterceptors: [any ResponseInterceptor] = [],
+        connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
+        connectivityMonitor: (any ConnectivityMonitor)? = nil
     )
 }
 ```
@@ -107,6 +109,65 @@ let client = NetworkClient(
 ```
 
 Retry is only attempted for transient errors: `.timeout`, `.noConnectivity`, `.serverError`. Client errors (4xx) and decode errors are never retried. Transport failures from `URLSession`, such as `URLError(.timedOut)` and `URLError(.notConnectedToInternet)`, are mapped to `NetworkError` before retry decisions.
+
+Automatic retries default to idempotent HTTP methods: `.get`, `.put`, and `.delete`. If a request is safe to replay for your backend, opt in explicitly:
+
+```swift
+let client = NetworkClient(
+    retryPolicy: .fixed(
+        maxAttempts: 1,
+        delay: 0,
+        retryableMethods: [.post]
+    )
+)
+```
+
+### No-connectivity retry
+
+Opt in to waiting for connectivity before retrying requests that fail with `.noConnectivity`:
+
+```swift
+let client = NetworkClient(
+    connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: 60)
+)
+```
+
+When a request fails because the connection is unavailable, `NetworkClient` waits for `ConnectivityMonitor` to report connectivity, then retries the same request inside the original async call. The caller can still cancel the task. The timeout is applied to each connectivity wait attempt. If connectivity is not restored before the timeout, the request throws `NetworkError.noConnectivity`. If the connectivity retry budget is exhausted, normal `RetryPolicy` handling can still retry `.noConnectivity`.
+
+Connectivity retry uses the same method-safety default as `RetryPolicy`: `.get`, `.put`, and `.delete`. For non-idempotent methods, opt in only when the endpoint is safe to replay:
+
+```swift
+let client = NetworkClient(
+    connectivityRetryPolicy: .waitUntilConnected(
+        maxAttempts: 1,
+        timeout: 60,
+        retryableMethods: [.post]
+    )
+)
+```
+
+This does not replay old requests in the background after the original call has failed.
+
+### Connectivity state
+
+Use `NetworkPathConnectivityMonitor` directly when the app needs to present offline UI without adding no-connectivity handling to every request:
+
+```swift
+let connectivityMonitor = NetworkPathConnectivityMonitor()
+
+let client = NetworkClient(
+    connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: 60),
+    connectivityMonitor: connectivityMonitor
+)
+
+Task { @MainActor in
+    for await state in connectivityMonitor.connectivityStates() {
+        isOfflineBannerVisible = state == .disconnected
+    }
+}
+```
+
+The connectivity state stream is intended for app-level observation, such as an offline banner in a root view model. NetRunner provides the state stream and retry infrastructure; the app decides how to present offline UI. `NWPath.Status.satisfied` is emitted as `.connected`; all other path statuses are emitted as `.disconnected`. Requests still throw `NetworkError.noConnectivity` when connectivity retry is disabled, times out, retry policy is exhausted, the request method is not retryable, or the request task is cancelled.
 
 ### Request interceptors
 

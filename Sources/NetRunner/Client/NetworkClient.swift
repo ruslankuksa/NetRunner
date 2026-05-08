@@ -1,6 +1,29 @@
 
 import Foundation
 
+private enum ConnectivityMonitorStorage: Sendable {
+    case none
+    case injected(any ConnectivityMonitor)
+    case owned(any CancellableConnectivityMonitor)
+
+    var monitor: (any ConnectivityMonitor)? {
+        switch self {
+        case .none:
+            return nil
+        case .injected(let monitor):
+            return monitor
+        case .owned(let monitor):
+            return monitor
+        }
+    }
+
+    func cancelIfOwned() {
+        if case .owned(let monitor) = self {
+            monitor.cancel()
+        }
+    }
+}
+
 /// A concrete `NetRunner` actor that executes requests with an injected session,
 /// retry policy, and request/response interceptors.
 public actor NetworkClient: NetRunner {
@@ -9,6 +32,12 @@ public actor NetworkClient: NetRunner {
     private let retryPolicy: RetryPolicy
     private let requestInterceptors: [any RequestInterceptor]
     private let responseInterceptors: [any ResponseInterceptor]
+    private let connectivityRetryPolicy: ConnectivityRetryPolicy
+    private let connectivityMonitorStorage: ConnectivityMonitorStorage
+
+    private var connectivityMonitor: (any ConnectivityMonitor)? {
+        connectivityMonitorStorage.monitor
+    }
 
     /// Creates a network client.
     ///
@@ -17,16 +46,55 @@ public actor NetworkClient: NetRunner {
     ///   - retryPolicy: The retry policy applied to retryable HTTP and transport failures.
     ///   - requestInterceptors: Interceptors applied before each request attempt.
     ///   - responseInterceptors: Interceptors that approve or veto retry attempts.
+    ///   - connectivityRetryPolicy: The retry policy for no-connectivity failures.
+    ///   - connectivityMonitor: The monitor used to wait for connectivity restoration. When
+    ///     omitted, `NetworkClient` creates one only if connectivity retry is enabled.
     public init(
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
         requestInterceptors: [any RequestInterceptor] = [],
-        responseInterceptors: [any ResponseInterceptor] = []
+        responseInterceptors: [any ResponseInterceptor] = [],
+        connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
+        connectivityMonitor: (any ConnectivityMonitor)? = nil
+    ) {
+        self.init(
+            session: session,
+            retryPolicy: retryPolicy,
+            requestInterceptors: requestInterceptors,
+            responseInterceptors: responseInterceptors,
+            connectivityRetryPolicy: connectivityRetryPolicy,
+            connectivityMonitor: connectivityMonitor,
+            connectivityMonitorFactory: { NetworkPathConnectivityMonitor() }
+        )
+    }
+
+    init(
+        session: any URLSessionProtocol = URLSession.shared,
+        retryPolicy: RetryPolicy = .none,
+        requestInterceptors: [any RequestInterceptor] = [],
+        responseInterceptors: [any ResponseInterceptor] = [],
+        connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
+        connectivityMonitor: (any ConnectivityMonitor)? = nil,
+        connectivityMonitorFactory: () -> any CancellableConnectivityMonitor
     ) {
         self.session = session
         self.retryPolicy = retryPolicy
         self.requestInterceptors = requestInterceptors
         self.responseInterceptors = responseInterceptors
+        self.connectivityRetryPolicy = connectivityRetryPolicy
+
+        if let connectivityMonitor {
+            self.connectivityMonitorStorage = .injected(connectivityMonitor)
+        } else if case .waitUntilConnected = connectivityRetryPolicy {
+            let ownedConnectivityMonitor = connectivityMonitorFactory()
+            self.connectivityMonitorStorage = .owned(ownedConnectivityMonitor)
+        } else {
+            self.connectivityMonitorStorage = .none
+        }
+    }
+
+    deinit {
+        connectivityMonitorStorage.cancelIfOwned()
     }
 
     // MARK: - NetRunner conformance
@@ -151,6 +219,8 @@ public actor NetworkClient: NetRunner {
         operation: (URLRequest, Int) async throws -> (Data, URLResponse)
     ) async throws -> Data {
         var attemptIndex = 0
+        var retryAttemptIndex = 0
+        var connectivityRetryAttemptIndex = 0
         while true {
             try Task.checkCancellation()
             let urlRequest = try await makeRequest()
@@ -162,8 +232,23 @@ public actor NetworkClient: NetRunner {
                 throw CancellationError()
             } catch {
                 let networkError = error as? NetworkError ?? NetworkError(error)
-                let shouldRetryByPolicy = attemptIndex < retryPolicy.maxAttempts
-                    && retryPolicy.isRetryable(error: networkError)
+
+                if try await waitForConnectivityRetryIfNeeded(
+                    request: urlRequest,
+                    attemptIndex: attemptIndex,
+                    connectivityRetryAttemptIndex: connectivityRetryAttemptIndex,
+                    error: networkError
+                ) {
+                    connectivityRetryAttemptIndex += 1
+                    attemptIndex += 1
+                    continue
+                }
+
+                let shouldRetryByPolicy = retryAttemptIndex < retryPolicy.maxAttempts
+                    && retryPolicy.isRetryable(
+                        error: networkError,
+                        method: Self.httpMethod(from: urlRequest)
+                    )
 
                 guard shouldRetryByPolicy else {
                     throw networkError
@@ -179,10 +264,79 @@ public actor NetworkClient: NetRunner {
                     throw networkError
                 }
 
-                try await sleepBeforeRetry(attempt: attemptIndex)
+                try await sleepBeforeRetry(attempt: retryAttemptIndex)
+                retryAttemptIndex += 1
                 attemptIndex += 1
             }
         }
+    }
+
+    private func waitForConnectivityRetryIfNeeded(
+        request: URLRequest,
+        attemptIndex: Int,
+        connectivityRetryAttemptIndex: Int,
+        error: NetworkError
+    ) async throws -> Bool {
+        guard case .noConnectivity = error else {
+            return false
+        }
+
+        guard case .waitUntilConnected(let maxAttempts, let timeout, let retryableMethods) = connectivityRetryPolicy else {
+            return false
+        }
+
+        guard connectivityRetryAttemptIndex < maxAttempts else {
+            return false
+        }
+
+        guard Self.isRetryable(request: request, retryableMethods: retryableMethods) else {
+            return false
+        }
+
+        guard let connectivityMonitor else {
+            return false
+        }
+
+        let context = RetryContext(
+            request: request,
+            attemptIndex: attemptIndex,
+            error: error
+        )
+        let allApprove = await allResponseInterceptorsApprove(context: context)
+        guard allApprove else {
+            throw error
+        }
+
+        do {
+            if let restorationMonitor = connectivityMonitor as? any ConnectivityRestorationMonitoring {
+                try await restorationMonitor.waitForConnectivityRestoration(timeout: timeout)
+            } else {
+                try await connectivityMonitor.waitUntilConnected(timeout: timeout)
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw error
+        }
+
+        return true
+    }
+
+    private static func isRetryable(
+        request: URLRequest,
+        retryableMethods: Set<HTTPMethod>
+    ) -> Bool {
+        guard let method = httpMethod(from: request) else {
+            return false
+        }
+        return retryableMethods.contains(method)
+    }
+
+    private static func httpMethod(from request: URLRequest) -> HTTPMethod? {
+        guard let httpMethod = request.httpMethod else {
+            return nil
+        }
+        return HTTPMethod(rawValue: httpMethod.uppercased())
     }
 
     private func sleepBeforeRetry(attempt: Int) async throws {

@@ -1,24 +1,25 @@
-
 import Foundation
 @testable import NetRunner
 
-struct TestNetworkRequest: NetworkRequest {
+// @unchecked Sendable is safe for this fixture: tests configure all stored
+// values before passing the request into async upload code.
+struct TestUploadRequest: UploadRequest, @unchecked Sendable {
     var baseURL: URL
     var method: HTTPMethod
     var endpoint: any Endpoint
     var headers: HTTPHeaders?
     var parameters: QueryParameters?
-    var httpBody: Encodable?
+    var uploadBody: UploadBody
     var cachePolicy: URLRequest.CachePolicy
     var arrayEncoding: ArrayEncoding
 
     init(
         baseURL: URL = URL(string: "https://example.com")!,
-        method: HTTPMethod = .get,
+        method: HTTPMethod = .post,
         endpoint: any Endpoint = TestEndpoint(),
         headers: HTTPHeaders? = nil,
         parameters: QueryParameters? = nil,
-        httpBody: Encodable? = nil,
+        uploadBody: UploadBody,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         arrayEncoding: ArrayEncoding = .brackets
     ) {
@@ -27,7 +28,7 @@ struct TestNetworkRequest: NetworkRequest {
         self.endpoint = endpoint
         self.headers = headers
         self.parameters = parameters
-        self.httpBody = httpBody
+        self.uploadBody = uploadBody
         self.cachePolicy = cachePolicy
         self.arrayEncoding = arrayEncoding
     }

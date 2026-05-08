@@ -31,6 +31,16 @@ struct NetworkErrorTests {
         }
     }
 
+    @Test func initUnhandledURLErrorPreservesCodeInRequestFailedMessage() throws {
+        let error = URLError(.badURL)
+        guard case .requestFailed(let message) = NetworkError(error) else {
+            Issue.record("Expected .requestFailed for unhandled URLError")
+            return
+        }
+
+        #expect(message.contains(String(URLError.Code.badURL.rawValue)))
+    }
+
     @Test func initNonURLErrorMapsToRequestFailed() {
         let error = NSError(domain: "test", code: 42)
         if case .requestFailed = NetworkError(error) {

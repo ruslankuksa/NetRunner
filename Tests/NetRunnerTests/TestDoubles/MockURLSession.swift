@@ -6,7 +6,8 @@ import Foundation
 // @unchecked Sendable is safe here because:
 // 1. Each test creates its own instance (no cross-test sharing).
 // 2. Stubs are configured before the first `await` and not mutated afterwards.
-// 3. Retry tests await each upload sequentially within a single Task on the
+// 3. Sequential result queues are consumed by a single client operation.
+// 4. Retry tests await each upload sequentially within a single Task on the
 //    `UploadTests` `@Suite(.serialized)` suite, so `capturedRequests` and the
 //    `capturedUpload*` arrays are appended-to from one logical thread at a time.
 final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
@@ -15,6 +16,8 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     var capturedUploadFileURLs: [URL] = []
     var capturedUploadFileData: [Data] = []
     var uploadProgressEvents: [(bytesSent: Int64, totalBytesExpectedToSend: Int64)] = []
+    var dataResults: [Result<(Data, URLResponse), Error>] = []
+    var uploadResults: [Result<(Data, URLResponse), Error>] = []
 
     var stubbedData: Data = Data()
     var stubbedResponse: URLResponse = HTTPURLResponse(
@@ -27,6 +30,9 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         capturedRequests.append(request)
+        if !dataResults.isEmpty {
+            return try dataResults.removeFirst().get()
+        }
         if let error = stubbedError {
             throw error
         }
@@ -48,6 +54,9 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
         }
         for event in uploadProgressEvents {
             progress(event.bytesSent, event.totalBytesExpectedToSend)
+        }
+        if !uploadResults.isEmpty {
+            return try uploadResults.removeFirst().get()
         }
         if let error = stubbedError {
             throw error

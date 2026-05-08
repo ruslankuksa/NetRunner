@@ -445,7 +445,10 @@ struct UploadTests {
         let session = MockURLSession()
         session.stub(statusCode: 503)
         session.uploadProgressEvents = [(3, 9)]
-        let client = NetworkClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
+        let client = NetworkClient(
+            session: session,
+            retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post])
+        )
         let request = TestUploadRequest(
             method: .post,
             uploadBody: .rawFile(fileURL: uploadFile, contentType: nil)
@@ -470,7 +473,10 @@ struct UploadTests {
 
         let session = MockURLSession()
         session.stubbedError = URLError(.timedOut)
-        let client = NetworkClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
+        let client = NetworkClient(
+            session: session,
+            retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post])
+        )
         let request = TestUploadRequest(
             method: .post,
             uploadBody: .rawFile(fileURL: uploadFile, contentType: nil)
@@ -494,7 +500,7 @@ struct UploadTests {
         let responseInterceptor = RefreshTokenRetryInterceptor(store: store)
         let client = NetworkClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
+            retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post]),
             requestInterceptors: [requestInterceptor],
             responseInterceptors: [responseInterceptor]
         )
@@ -513,6 +519,52 @@ struct UploadTests {
         #expect(requestInterceptor.interceptCallCount == 2)
         #expect(responseInterceptor.callCount == 1)
         #expect(authorizationHeaders == ["Bearer initial", "Bearer refreshed"])
+    }
+
+    @Test func connectivityRetryWaitsUntilConnectedBeforeRetryingUpload() async throws {
+        let uploadFile = try makeTemporaryFile(contents: "raw-bytes")
+        defer { try? FileManager.default.removeItem(at: uploadFile) }
+
+        let session = MockURLSession()
+        session.stub(statusCode: 204)
+        session.uploadProgressEvents = [(3, 9)]
+        session.uploadResults = [
+            .failure(URLError(.notConnectedToInternet)),
+            .success((Data(), session.stubbedResponse))
+        ]
+        let connectivityMonitor = MockConnectivityMonitor()
+        let client = NetworkClient(
+            session: session,
+            connectivityRetryPolicy: .waitUntilConnected(
+                maxAttempts: 1,
+                timeout: nil,
+                retryableMethods: [.post]
+            ),
+            connectivityMonitor: connectivityMonitor
+        )
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .rawFile(fileURL: uploadFile, contentType: nil)
+        )
+
+        var progress: [UploadProgress] = []
+        let task = Task {
+            for try await event in client.upload(request: request) {
+                if case .progress(let uploadProgress) = event {
+                    progress.append(uploadProgress)
+                }
+            }
+        }
+
+        await connectivityMonitor.waitForWaitCall()
+        #expect(session.capturedUploadFileURLs == [uploadFile])
+
+        await connectivityMonitor.connect()
+        try await task.value
+
+        #expect(session.capturedUploadFileURLs == [uploadFile, uploadFile])
+        #expect(progress.map(\.attemptIndex) == [0, 1])
+        #expect(await connectivityMonitor.waitCallCount == 1)
     }
 
     // MARK: - Helpers

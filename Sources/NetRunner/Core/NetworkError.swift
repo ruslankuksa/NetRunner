@@ -83,7 +83,7 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
         case .notConnectedToInternet, .networkConnectionLost:
             self = .noConnectivity
         default:
-            self = .requestFailed(urlError.localizedDescription)
+            self = .requestFailed("\(urlError.localizedDescription) (URLError.Code \(urlError.code.rawValue))")
         }
     }
 }
