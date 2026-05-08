@@ -33,6 +33,35 @@ struct NetworkClientTests {
         return session
     }
 
+    private enum ConnectivityStateTestError: Error {
+        case timedOut
+        case finishedWithoutValue
+    }
+
+    private func firstConnectivityState(
+        from stream: AsyncStream<ConnectivityState>,
+        timeout: TimeInterval = 2
+    ) async throws -> ConnectivityState {
+        try await withThrowingTaskGroup(of: ConnectivityState.self) { group in
+            group.addTask {
+                for await state in stream.prefix(1) {
+                    return state
+                }
+                throw ConnectivityStateTestError.finishedWithoutValue
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                throw ConnectivityStateTestError.timedOut
+            }
+
+            guard let state = try await group.next() else {
+                throw ConnectivityStateTestError.finishedWithoutValue
+            }
+            group.cancelAll()
+            return state
+        }
+    }
+
     // MARK: - Decode success
 
     @Test func execute200DecodesResponse() async throws {
@@ -159,6 +188,23 @@ struct NetworkClientTests {
         }
 
         #expect(session.callCount == 2)
+    }
+
+    @Test func retryPolicyDoesNotRetryUnknownHTTPMethod() async {
+        let session = stubbedSession(statusCode: 503)
+        let interceptor = MockRequestInterceptor()
+        interceptor.methodOverride = "CUSTOM"
+        let client = makeClient(
+            session: session,
+            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
+            requestInterceptors: [interceptor]
+        )
+
+        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+            try await client.send(request: TestNetworkRequest())
+        }
+
+        #expect(session.callCount == 1)
     }
 
     @Test func disabledConnectivityRetryDoesNotCreateDefaultMonitor() {
@@ -337,9 +383,11 @@ struct NetworkClientTests {
         let session = MockURLSession()
         session.stubbedError = URLError(.notConnectedToInternet)
         let connectivityMonitor = MockConnectivityMonitor()
+        let responseInterceptor = MockResponseInterceptor()
         let client = makeClient(
             session: session,
             retryPolicy: .fixed(maxAttempts: 1, delay: 0),
+            responseInterceptors: [responseInterceptor],
             connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
             connectivityMonitor: connectivityMonitor
         )
@@ -356,6 +404,7 @@ struct NetworkClientTests {
         }
         #expect(session.callCount == 3)
         #expect(await connectivityMonitor.waitCallCount == 1)
+        #expect(responseInterceptor.callCount == 2)
     }
 
     @Test func connectivityRetryTimeoutThrowsNoConnectivity() async {
@@ -425,10 +474,12 @@ struct NetworkClientTests {
         let store = ConnectivityStateStore()
         store.update(.connected)
 
-        var iterator = store.stream().makeAsyncIterator()
-        let state = await iterator.next()
+        var states: [ConnectivityState] = []
+        for await state in store.stream().prefix(1) {
+            states.append(state)
+        }
 
-        #expect(state == .connected)
+        #expect(states == [.connected])
     }
 
     @Test func connectivityStateStoreCurrentStateReturnsLatestKnownState() {
@@ -467,11 +518,14 @@ struct NetworkClientTests {
         #expect(secondState == .disconnected)
     }
 
-    @Test func networkPathConnectivityMonitorProvidesConnectivityStates() {
+    @Test func networkPathConnectivityMonitorProvidesConnectivityStates() async throws {
         let monitor = NetworkPathConnectivityMonitor()
+        defer { monitor.cancel() }
         let provider: any ConnectivityStateProviding = monitor
 
-        _ = provider.connectivityStates()
+        let state = try await firstConnectivityState(from: provider.connectivityStates())
+
+        #expect(state == .connected || state == .disconnected)
     }
 
     @Test func mockConnectivityMonitorPublishesConnectivityState() async {
@@ -499,6 +553,20 @@ struct NetworkClientTests {
 
         await #expect(throws: NetworkError.noConnectivity) {
             try await store.waitForConnectivityRestoration(timeout: 0)
+        }
+    }
+
+    @Test func connectivityWaitWithTimeoutCancellationThrowsCancellationError() async {
+        let store = ConnectivityWaiterStore()
+
+        let task = Task {
+            try await store.waitUntilConnected(timeout: 60)
+        }
+        await Task.yield()
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
         }
     }
 

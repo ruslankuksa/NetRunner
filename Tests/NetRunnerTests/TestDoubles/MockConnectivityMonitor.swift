@@ -35,6 +35,18 @@ actor MockConnectivityMonitor: ConnectivityMonitor, ConnectivityStateProviding {
         try await waiterStore.waitUntilConnected(timeout: timeout)
     }
 
+    func waitForConnectivityRestoration(timeout: TimeInterval?) async throws {
+        waitCallCount += 1
+        capturedTimeouts.append(timeout)
+        resumeWaitStartedContinuations()
+
+        if let waitError {
+            throw waitError
+        }
+
+        try await waiterStore.waitForConnectivityRestoration(timeout: timeout)
+    }
+
     func waitForWaitCall() async {
         if waitCallCount > 0 {
             return

@@ -6,7 +6,6 @@ public final class NetworkPathConnectivityMonitor:
     ConnectivityMonitor,
     ConnectivityStateProviding,
     CancellableConnectivityMonitor,
-    ConnectivityRestorationMonitoring,
     @unchecked Sendable
 {
     private let implementation: any NetworkPathConnectivityMonitorImplementation
@@ -30,7 +29,7 @@ public final class NetworkPathConnectivityMonitor:
         try await implementation.waitUntilConnected(timeout: timeout)
     }
 
-    func waitForConnectivityRestoration(timeout: TimeInterval?) async throws {
+    public func waitForConnectivityRestoration(timeout: TimeInterval?) async throws {
         try await implementation.waitForConnectivityRestoration(timeout: timeout)
     }
 

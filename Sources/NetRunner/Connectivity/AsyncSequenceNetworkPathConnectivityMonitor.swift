@@ -82,6 +82,10 @@ final class AsyncSequenceNetworkPathConnectivityMonitor:
             }
         }
         lock.unlock()
+
+        if shouldStart {
+            Self.updatePath(monitor.currentPath, waiterStore: waiterStore, stateStore: stateStore)
+        }
     }
 
     private func checkNotCancelled() throws {

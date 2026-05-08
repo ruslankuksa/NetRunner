@@ -65,17 +65,21 @@ final class ConnectivityWaiterStore: @unchecked Sendable {
                 try await self.waitWithoutTimeout(
                     requiresFutureConnectedUpdate: requiresFutureConnectedUpdate
                 )
+                try Task.checkCancellation()
             }
             group.addTask {
                 try await Self.sleep(seconds: timeout)
+                try Task.checkCancellation()
                 throw NetworkError.noConnectivity
             }
 
             do {
                 _ = try await group.next()
+                try Task.checkCancellation()
                 group.cancelAll()
             } catch {
                 group.cancelAll()
+                try Task.checkCancellation()
                 throw error
             }
         }

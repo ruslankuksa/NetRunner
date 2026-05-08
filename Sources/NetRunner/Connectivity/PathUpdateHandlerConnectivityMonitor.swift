@@ -80,6 +80,7 @@ final class PathUpdateHandlerConnectivityMonitor:
             Self.updatePath(path, waiterStore: waiterStore, stateStore: stateStore)
         }
         monitor.start(queue: queue)
+        Self.updatePath(monitor.currentPath, waiterStore: waiterStore, stateStore: stateStore)
     }
 
     private func checkNotCancelled() throws {

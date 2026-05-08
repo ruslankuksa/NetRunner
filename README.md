@@ -110,7 +110,7 @@ let client = NetworkClient(
 
 Retry is only attempted for transient errors: `.timeout`, `.noConnectivity`, `.serverError`. Client errors (4xx) and decode errors are never retried. Transport failures from `URLSession`, such as `URLError(.timedOut)` and `URLError(.notConnectedToInternet)`, are mapped to `NetworkError` before retry decisions.
 
-Automatic retries default to idempotent HTTP methods: `.get`, `.put`, and `.delete`. If a request is safe to replay for your backend, opt in explicitly:
+Automatic retries default to idempotent HTTP methods: `.get`, `.put`, and `.delete`. If a request is safe to replay for your backend, opt in explicitly. If a request interceptor changes the `URLRequest` to an HTTP method NetRunner cannot map to `HTTPMethod`, the attempt is treated as non-retryable.
 
 ```swift
 let client = NetworkClient(
@@ -148,6 +148,8 @@ let client = NetworkClient(
 
 This does not replay old requests in the background after the original call has failed.
 
+Custom `ConnectivityMonitor` implementations can implement `waitForConnectivityRestoration(timeout:)` when they need to wait for a future connected signal after a failed request. The default implementation delegates to `waitUntilConnected(timeout:)`.
+
 ### Connectivity state
 
 Use `NetworkPathConnectivityMonitor` directly when the app needs to present offline UI without adding no-connectivity handling to every request:
@@ -160,14 +162,14 @@ let client = NetworkClient(
     connectivityMonitor: connectivityMonitor
 )
 
-Task { @MainActor in
+let observationTask = Task { @MainActor in
     for await state in connectivityMonitor.connectivityStates() {
         isOfflineBannerVisible = state == .disconnected
     }
 }
 ```
 
-The connectivity state stream is intended for app-level observation, such as an offline banner in a root view model. NetRunner provides the state stream and retry infrastructure; the app decides how to present offline UI. `NWPath.Status.satisfied` is emitted as `.connected`; all other path statuses are emitted as `.disconnected`. Requests still throw `NetworkError.noConnectivity` when connectivity retry is disabled, times out, retry policy is exhausted, the request method is not retryable, or the request task is cancelled.
+The connectivity state stream is intended for app-level observation, such as an offline banner in a root view model. NetRunner provides the state stream and retry infrastructure; the app decides how to present offline UI. Prefer SwiftUI `.task {}` or cancel manually-created observation tasks when the owner is dismissed or deinitialized. `NWPath.Status.satisfied` is emitted as `.connected`; all other path statuses are emitted as `.disconnected`. Requests still throw `NetworkError.noConnectivity` when connectivity retry is disabled, times out, retry policy is exhausted, the request method is not retryable, or the request task is cancelled.
 
 ### Request interceptors
 
@@ -235,7 +237,7 @@ for try await event in client.upload(request: request, responseType: User.self) 
 }
 ```
 
-For APIs that expect the complete request body directly, use `.data(data:contentType:)` for in-memory bytes or `.rawFile(fileURL:contentType:)` for a local file. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`.
+For APIs that expect the complete request body directly, use `.data(data:contentType:)` for in-memory bytes or `.rawFile(fileURL:contentType:)` for a local file. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`. Multipart uploads are prepared once before the first attempt; retries reuse the same temporary file, and NetRunner removes it when the upload finishes or fails.
 
 Custom `NetRunner` conformers get default upload implementations backed by `URLSession.shared`. Use `NetworkClient` when uploads need injected sessions, retry policies, or request/response interceptors.
 

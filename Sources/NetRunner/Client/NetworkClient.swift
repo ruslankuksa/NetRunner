@@ -94,6 +94,8 @@ public actor NetworkClient: NetRunner {
     }
 
     deinit {
+        // Safe synchronously: owned monitor cancellation only touches internally
+        // synchronized stores and resumes continuations.
         connectivityMonitorStorage.cancelIfOwned()
     }
 
@@ -308,11 +310,7 @@ public actor NetworkClient: NetRunner {
         }
 
         do {
-            if let restorationMonitor = connectivityMonitor as? any ConnectivityRestorationMonitoring {
-                try await restorationMonitor.waitForConnectivityRestoration(timeout: timeout)
-            } else {
-                try await connectivityMonitor.waitUntilConnected(timeout: timeout)
-            }
+            try await connectivityMonitor.waitForConnectivityRestoration(timeout: timeout)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
