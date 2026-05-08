@@ -106,7 +106,7 @@ let client = NetworkClient(
 )
 ```
 
-Retry is only attempted for transient errors: `.timeout`, `.noConnectivity`, `.serverError`. Client errors (4xx) and decode errors are never retried.
+Retry is only attempted for transient errors: `.timeout`, `.noConnectivity`, `.serverError`. Client errors (4xx) and decode errors are never retried. Transport failures from `URLSession`, such as `URLError(.timedOut)` and `URLError(.notConnectedToInternet)`, are mapped to `NetworkError` before retry decisions.
 
 ### Request interceptors
 
@@ -128,7 +128,7 @@ let client = NetworkClient(
 )
 ```
 
-Multiple interceptors are applied left-to-right.
+Multiple interceptors are applied left-to-right before each attempt, including retry attempts. This lets interceptors read refreshed credentials or regenerate per-attempt signatures.
 
 ### File uploads
 
