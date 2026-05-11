@@ -75,6 +75,13 @@ struct APIClient: NetRunner {}
 let user: User = try await APIClient().execute(request: GetUserRequest(id: "42"))
 ```
 
+For endpoints that do not return a response body, use the same method without
+assigning a decoded result:
+
+```swift
+try await client.execute(request: UpdateUserRequest(id: "42"))
+```
+
 ---
 
 ## NetworkClient

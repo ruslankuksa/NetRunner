@@ -108,7 +108,7 @@ public actor NetworkClient: NetRunner {
     }
 
     /// Executes a request that does not require a decoded response body.
-    public func send(request: any NetworkRequest) async throws {
+    public func execute(request: any NetworkRequest) async throws {
         _ = try await performRequest(request)
     }
 

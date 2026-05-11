@@ -75,6 +75,15 @@ struct NetworkClientTests {
         #expect(session.callCount == 1)
     }
 
+    @Test func executeWithoutResponseBodyCompletes() async throws {
+        let session = stubbedSession(statusCode: 204)
+        let client = makeClient(session: session)
+
+        try await client.execute(request: TestNetworkRequest())
+
+        #expect(session.callCount == 1)
+    }
+
     // MARK: - Decode failure
 
     @Test func execute200BadJSONThrowsDecodingFailed() async {
@@ -94,7 +103,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session)
 
         await #expect(throws: NetworkError.unauthorized) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
     }
 
@@ -103,7 +112,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session)
 
         await #expect(throws: NetworkError.clientError(statusCode: 404)) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
     }
 
@@ -112,7 +121,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session)
 
         await #expect(throws: NetworkError.serverError(statusCode: 503)) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
     }
 
@@ -124,7 +133,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session, retryPolicy: .exponential(maxAttempts: 3, baseDelay: 0))
 
         await #expect(throws: NetworkError.serverError(statusCode: 503)) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
         #expect(session.callCount == 4, "1 initial + 3 retries = 4")
     }
@@ -135,7 +144,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 3, delay: 0))
 
         await #expect(throws: NetworkError.self) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 1, "Client errors should not be retried")
@@ -147,7 +156,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
 
         await #expect(throws: NetworkError.timeout) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 2, "1 initial + 1 retry = 2")
@@ -159,7 +168,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
 
         await #expect(throws: NetworkError.noConnectivity) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 2, "1 initial + 1 retry = 2")
@@ -170,7 +179,7 @@ struct NetworkClientTests {
         let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
 
         await #expect(throws: NetworkError.serverError(statusCode: 503)) {
-            try await client.send(request: TestNetworkRequest(method: .post))
+            try await client.execute(request: TestNetworkRequest(method: .post))
         }
 
         #expect(session.callCount == 1)
@@ -184,7 +193,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.serverError(statusCode: 503)) {
-            try await client.send(request: TestNetworkRequest(method: .post))
+            try await client.execute(request: TestNetworkRequest(method: .post))
         }
 
         #expect(session.callCount == 2)
@@ -201,7 +210,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.serverError(statusCode: 503)) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 1)
@@ -317,7 +326,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.noConnectivity) {
-            try await client.send(request: TestNetworkRequest(method: .post))
+            try await client.execute(request: TestNetworkRequest(method: .post))
         }
 
         #expect(session.callCount == 1)
@@ -372,7 +381,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.noConnectivity) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 2)
@@ -393,7 +402,7 @@ struct NetworkClientTests {
         )
 
         let task = Task {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         await connectivityMonitor.waitForWaitCall()
@@ -418,7 +427,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.noConnectivity) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 1)
@@ -437,7 +446,7 @@ struct NetworkClientTests {
         )
 
         let task = Task {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         await connectivityMonitor.waitForWaitCall()
@@ -462,7 +471,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.noConnectivity) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 1)
@@ -582,7 +591,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.self) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         #expect(session.callCount == 1, "Interceptor vetoed — no retries")
@@ -602,7 +611,7 @@ struct NetworkClientTests {
         )
 
         await #expect(throws: NetworkError.serverError(statusCode: 503)) {
-            try await client.send(request: TestNetworkRequest())
+            try await client.execute(request: TestNetworkRequest())
         }
 
         let authorizationHeaders = session.capturedRequests.map {

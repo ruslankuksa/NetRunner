@@ -126,5 +126,5 @@ struct NetworkErrorTests {
 // Minimal conformer so we can call the default validate
 private struct TestRunner: NetRunner {
     func execute<T: Decodable>(request: any NetworkRequest) async throws -> T { fatalError() }
-    func send(request: any NetworkRequest) async throws { fatalError() }
+    func execute(request: any NetworkRequest) async throws { fatalError() }
 }

@@ -5,8 +5,8 @@ import Foundation
 public protocol NetRunner {
     /// Executes a request and decodes the response into the specified `Decodable` type.
     func execute<T: Decodable>(request: any NetworkRequest) async throws -> T
-    /// Executes a request without decoding a response body (fire-and-forget).
-    func send(request: any NetworkRequest) async throws
+    /// Executes a request without decoding a response body.
+    func execute(request: any NetworkRequest) async throws
     /// Uploads a request and decodes the response into the specified `Decodable` type.
     func upload<T: Decodable>(
         request: any UploadRequest,
@@ -28,7 +28,7 @@ public extension NetRunner {
         return try decodeData(data, decoder: request.decoder)
     }
 
-    func send(request: any NetworkRequest) async throws {
+    func execute(request: any NetworkRequest) async throws {
         let urlRequest = try request.makeURLRequest()
         let (_, response) = try await URLSession.shared.data(for: urlRequest)
 
