@@ -1,9 +1,7 @@
 import Foundation
 @testable import NetRunner
 
-// @unchecked Sendable is safe for this fixture: tests configure all stored
-// values before passing the request into async upload code.
-struct TestUploadRequest: UploadRequest, @unchecked Sendable {
+struct TestUploadRequest: UploadRequest {
     var baseURL: URL
     var method: HTTPMethod
     var endpoint: any Endpoint

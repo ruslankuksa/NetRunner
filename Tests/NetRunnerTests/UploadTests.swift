@@ -547,20 +547,21 @@ struct UploadTests {
             uploadBody: .rawFile(fileURL: uploadFile, contentType: nil)
         )
 
-        var progress: [UploadProgress] = []
-        let task = Task {
+        let task = Task { () throws -> [UploadProgress] in
+            var progress: [UploadProgress] = []
             for try await event in client.upload(request: request) {
                 if case .progress(let uploadProgress) = event {
                     progress.append(uploadProgress)
                 }
             }
+            return progress
         }
 
         await connectivityMonitor.waitForWaitCall()
         #expect(session.capturedUploadFileURLs == [uploadFile])
 
         await connectivityMonitor.connect()
-        try await task.value
+        let progress = try await task.value
 
         #expect(session.capturedUploadFileURLs == [uploadFile, uploadFile])
         #expect(progress.map(\.attemptIndex) == [0, 1])

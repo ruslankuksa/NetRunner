@@ -2,7 +2,10 @@
 import Foundation
 
 /// Query parameters for a network request.
-public typealias QueryParameters = [String: Any]
+///
+/// Values must be `Sendable` so upload requests can cross task boundaries
+/// under Swift concurrency checking.
+public typealias QueryParameters = [String: any Sendable]
 
 /// HTTP header fields keyed by header name.
 public typealias HTTPHeaders = [String: String]

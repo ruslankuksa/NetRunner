@@ -1,7 +1,7 @@
 
 import Foundation
 
-internal struct PreparedUpload {
+internal struct PreparedUpload: Sendable {
     let request: URLRequest
     let fileURL: URL
     let temporaryFileURL: URL?

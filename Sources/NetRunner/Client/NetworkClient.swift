@@ -24,9 +24,9 @@ private enum ConnectivityMonitorStorage: Sendable {
     }
 }
 
-/// A concrete `NetRunner` actor that executes requests with an injected session,
+/// A concrete `NetRunner` client that executes requests with an injected session,
 /// retry policy, and request/response interceptors.
-public actor NetworkClient: NetRunner {
+public final class NetworkClient: NetRunner, Sendable {
 
     private let session: any URLSessionProtocol
     private let retryPolicy: RetryPolicy
@@ -49,7 +49,7 @@ public actor NetworkClient: NetRunner {
     ///   - connectivityRetryPolicy: The retry policy for no-connectivity failures.
     ///   - connectivityMonitor: The monitor used to wait for connectivity restoration. When
     ///     omitted, `NetworkClient` creates one only if connectivity retry is enabled.
-    public init(
+    public convenience init(
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
         requestInterceptors: [any RequestInterceptor] = [],
@@ -113,7 +113,10 @@ public actor NetworkClient: NetRunner {
     }
 
     /// Uploads a body and decodes the successful response body.
-    public nonisolated func upload<T: Decodable>(
+    ///
+    /// The decoded response type must be `Sendable` because values are emitted
+    /// through an `AsyncThrowingStream`.
+    public func upload<T: Decodable & Sendable>(
         request: any UploadRequest,
         responseType: T.Type = T.self
     ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
@@ -124,14 +127,14 @@ public actor NetworkClient: NetRunner {
     }
 
     /// Uploads a body without decoding a response body.
-    public nonisolated func upload(
+    public func upload(
         request: any UploadRequest
     ) -> AsyncThrowingStream<UploadEvent<Void>, Error> {
         makeUploadStream(request: request) { _ in () }
     }
 
     /// Validates an HTTP response using NetRunner's default status-code mapping.
-    public nonisolated func validate(_ response: URLResponse) throws {
+    public func validate(_ response: URLResponse) throws {
         try HTTPResponseValidator.validate(response)
     }
 
@@ -158,7 +161,7 @@ public actor NetworkClient: NetRunner {
         return interceptedRequest
     }
 
-    private nonisolated func makeUploadStream<T>(
+    private func makeUploadStream<T: Sendable>(
         request: any UploadRequest,
         decode: @escaping @Sendable (Data) throws -> T
     ) -> AsyncThrowingStream<UploadEvent<T>, Error> {

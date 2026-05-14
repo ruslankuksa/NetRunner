@@ -1,14 +1,18 @@
 
 import Foundation
 
-/// Adopted by network service types to gain default request and upload implementations.
+/// Adopted by network service types to gain default request implementations.
+///
+/// `Sendable` conformers also gain default upload implementations backed by
+/// `URLSession.shared`.
 public protocol NetRunner {
     /// Executes a request and decodes the response into the specified `Decodable` type.
     func execute<T: Decodable>(request: any NetworkRequest) async throws -> T
     /// Executes a request without decoding a response body.
     func execute(request: any NetworkRequest) async throws
-    /// Uploads a request and decodes the response into the specified `Decodable` type.
-    func upload<T: Decodable>(
+    /// Uploads a request and decodes the response into the specified `Decodable`
+    /// and `Sendable` type.
+    func upload<T: Decodable & Sendable>(
         request: any UploadRequest,
         responseType: T.Type
     ) -> AsyncThrowingStream<UploadEvent<T>, Error>
@@ -25,7 +29,7 @@ public extension NetRunner {
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
 
         try validate(response)
-        return try decodeData(data, decoder: request.decoder)
+        return try decodeResponseData(data, decoder: request.decoder)
     }
 
     func execute(request: any NetworkRequest) async throws {
@@ -35,13 +39,20 @@ public extension NetRunner {
         try validate(response)
     }
 
-    func upload<T: Decodable>(
+    func validate(_ response: URLResponse) throws {
+        try HTTPResponseValidator.validate(response)
+    }
+}
+
+public extension NetRunner where Self: Sendable {
+
+    func upload<T: Decodable & Sendable>(
         request: any UploadRequest,
         responseType: T.Type = T.self
     ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
         let decoder = request.decoder
         return makeUploadStream(request: request) { data in
-            try decodeData(data, decoder: decoder)
+            try decodeResponseData(data, decoder: decoder)
         }
     }
 
@@ -49,11 +60,7 @@ public extension NetRunner {
         makeUploadStream(request: request) { _ in () }
     }
 
-    func validate(_ response: URLResponse) throws {
-        try HTTPResponseValidator.validate(response)
-    }
-
-    private func makeUploadStream<T>(
+    private func makeUploadStream<T: Sendable>(
         request: any UploadRequest,
         decode: @escaping @Sendable (Data) throws -> T
     ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
@@ -103,12 +110,12 @@ public extension NetRunner {
         try validate(response)
         return data
     }
+}
 
-    private func decodeData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
-        do {
-            return try decoder.decode(T.self, from: data)
-        } catch {
-            throw NetworkError.decodingFailed(error)
-        }
+private func decodeResponseData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
+    do {
+        return try decoder.decode(T.self, from: data)
+    } catch {
+        throw NetworkError.decodingFailed(error)
     }
 }

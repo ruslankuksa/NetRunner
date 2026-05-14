@@ -1,6 +1,6 @@
 # NetRunner
 
-A zero-dependency Swift networking library built on protocol-oriented design. All public types are protocols with default implementations — consumers adopt them by conforming, not by subclassing or instantiating concrete types.
+A zero-dependency Swift networking library built around protocol-oriented request, upload, retry, and interceptor APIs, with `NetworkClient` as the concrete convenience client.
 
 ## Requirements
 
@@ -86,10 +86,10 @@ try await client.execute(request: UpdateUserRequest(id: "42"))
 
 ## NetworkClient
 
-`NetworkClient` is a Swift actor that assembles all library features in one place.
+`NetworkClient` is an immutable final class that assembles all library features in one place.
 
 ```swift
-public actor NetworkClient: NetRunner {
+public final class NetworkClient: NetRunner, Sendable {
     public init(
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
@@ -202,7 +202,7 @@ Multiple interceptors are applied left-to-right before each attempt, including r
 
 ### File uploads
 
-`NetworkClient` and custom `NetRunner` conformers support raw data, raw file, and `multipart/form-data` uploads with progress events. On iOS 15 / macOS 12 / tvOS 15 / watchOS 8 and newer, progress comes from `URLSessionTaskDelegate`; on older supported OS versions, `URLSession` only provides a completion progress event.
+`NetworkClient` and `Sendable` custom `NetRunner` conformers support raw data, raw file, and `multipart/form-data` uploads with progress events. Decoded upload response types must be `Decodable & Sendable` because they are emitted through `AsyncThrowingStream`. On iOS 15 / macOS 12 / tvOS 15 / watchOS 8 and newer, progress comes from `URLSessionTaskDelegate`; on older supported OS versions, `URLSession` only provides a completion progress event.
 
 ```swift
 struct AvatarUpload: UploadRequest {
@@ -246,7 +246,7 @@ for try await event in client.upload(request: request, responseType: User.self) 
 
 For APIs that expect the complete request body directly, use `.data(data:contentType:)` for in-memory bytes or `.rawFile(fileURL:contentType:)` for a local file. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`. Multipart uploads are prepared once before the first attempt; retries reuse the same temporary file, and NetRunner removes it when the upload finishes or fails.
 
-Custom `NetRunner` conformers get default upload implementations backed by `URLSession.shared`. Use `NetworkClient` when uploads need injected sessions, retry policies, or request/response interceptors.
+Custom `NetRunner` conformers that are `Sendable` get default upload implementations backed by `URLSession.shared`. Use `NetworkClient` when uploads need injected sessions, retry policies, or request/response interceptors.
 
 ### Response interceptors
 
@@ -348,6 +348,8 @@ struct SearchRequest: NetworkRequest {
 ```
 
 Default is `.brackets`.
+
+`QueryParameters` stores `Sendable` values, so common query literals such as strings, numbers, booleans, and arrays of those values work in Swift 5 and Swift 6 concurrency checking.
 
 ---
 
