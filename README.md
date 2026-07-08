@@ -13,13 +13,22 @@ A zero-dependency Swift networking library built around protocol-oriented reques
 
 ## Installation
 
-Add the package via Swift Package Manager:
+Add the package in Xcode via **File > Add Package Dependencies...**:
+
+- URL: `https://github.com/ruslankuksa/NetRunner`
+- Dependency Rule: **Up to Next Major Version**
+- Minimum Version: `3.0.0`
+
+Or add it to a package manifest:
 
 ```swift
-.package(url: "https://github.com/yourname/NetRunner", from: "1.0.0")
+.package(url: "https://github.com/ruslankuksa/NetRunner", from: "3.0.0")
 ```
 
 Then add `"NetRunner"` to your target's dependencies.
+
+NetRunner tags use plain semantic versions such as `3.0.0`. Breaking public
+API changes are released under a new major version.
 
 ---
 
