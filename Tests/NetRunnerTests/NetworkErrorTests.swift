@@ -59,11 +59,12 @@ struct NetworkErrorTests {
         NetworkError.decodingFailed(NSError(domain: "d", code: 1)),
         NetworkError.httpBodyNotAllowedForGET,
         NetworkError.uploadBodyNotAllowedForGET,
-        NetworkError.unauthorized,
+        NetworkError.unauthorized(response: makeTestHTTPErrorResponse(statusCode: 401)),
         NetworkError.timeout,
         NetworkError.noConnectivity,
-        NetworkError.serverError(statusCode: 503),
-        NetworkError.clientError(statusCode: 404),
+        NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503)),
+        NetworkError.clientError(response: makeTestHTTPErrorResponse(statusCode: 404)),
+        NetworkError.unexpectedStatusCode(response: makeTestHTTPErrorResponse(statusCode: 300)),
     ])
     func errorDescriptionNonNil(error: NetworkError) {
         #expect(error.errorDescription != nil, "\(error) should have a non-nil description")
@@ -74,32 +75,76 @@ struct NetworkErrorTests {
     @Test func validate200DoesNotThrow() throws {
         let runner = TestRunner()
         let response = makeHTTPResponse(statusCode: 200)
-        #expect(throws: Never.self) { try runner.validate(response) }
+        #expect(throws: Never.self) { try runner.validate(response, data: Data()) }
     }
 
     @Test func validate299DoesNotThrow() throws {
         let runner = TestRunner()
-        #expect(throws: Never.self) { try runner.validate(makeHTTPResponse(statusCode: 299)) }
+        #expect(throws: Never.self) {
+            try runner.validate(makeHTTPResponse(statusCode: 299), data: Data())
+        }
     }
 
     @Test func validate401ThrowsUnauthorized() {
         let runner = TestRunner()
-        #expect(throws: NetworkError.unauthorized) {
-            try runner.validate(makeHTTPResponse(statusCode: 401))
+        #expect(throws: NetworkError.unauthorized(response: makeTestHTTPErrorResponse(statusCode: 401))) {
+            try runner.validate(makeHTTPResponse(statusCode: 401), data: Data())
         }
     }
 
     @Test func validate404ThrowsClientError() {
         let runner = TestRunner()
-        #expect(throws: NetworkError.clientError(statusCode: 404)) {
-            try runner.validate(makeHTTPResponse(statusCode: 404))
+        #expect(throws: NetworkError.clientError(response: makeTestHTTPErrorResponse(statusCode: 404))) {
+            try runner.validate(makeHTTPResponse(statusCode: 404), data: Data())
+        }
+    }
+
+    @Test func validate422ThrowsClientErrorWithBodyAndHeaders() {
+        let runner = TestRunner()
+        let body = Data(#"{"success":false,"message":["Already connected"]}"#.utf8)
+        let response = makeHTTPResponse(
+            statusCode: 422,
+            headerFields: ["X-Request-ID": "request-123"]
+        )
+
+        do {
+            try runner.validate(response, data: body)
+            Issue.record("Expected validation to throw a client error")
+        } catch NetworkError.clientError(let errorResponse) {
+            #expect(errorResponse.statusCode == 422)
+            #expect(errorResponse.body == body)
+            #expect(errorResponse.headers["X-Request-ID"] == "request-123")
+            #expect(errorResponse.bodyText() == #"{"success":false,"message":["Already connected"]}"#)
+        } catch {
+            Issue.record("Expected client error, got \(error)")
         }
     }
 
     @Test func validate503ThrowsServerError() {
         let runner = TestRunner()
-        #expect(throws: NetworkError.serverError(statusCode: 503)) {
-            try runner.validate(makeHTTPResponse(statusCode: 503))
+        #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
+            try runner.validate(makeHTTPResponse(statusCode: 503), data: Data())
+        }
+    }
+
+    @Test func validate300ThrowsUnexpectedStatusCodeWithBodyAndHeaders() {
+        let runner = TestRunner()
+        let body = Data("use cached response".utf8)
+        let response = makeHTTPResponse(
+            statusCode: 300,
+            headerFields: ["Location": "https://example.com/alternate"]
+        )
+
+        do {
+            try runner.validate(response, data: body)
+            Issue.record("Expected validation to throw an unexpected status code error")
+        } catch NetworkError.unexpectedStatusCode(let errorResponse) {
+            #expect(errorResponse.statusCode == 300)
+            #expect(errorResponse.body == body)
+            #expect(errorResponse.headers["Location"] == "https://example.com/alternate")
+            #expect(errorResponse.bodyText() == "use cached response")
+        } catch {
+            Issue.record("Expected unexpected status code error, got \(error)")
         }
     }
 
@@ -107,18 +152,21 @@ struct NetworkErrorTests {
         let runner = TestRunner()
         let response = URLResponse(url: URL(string: "https://example.com")!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
         #expect(throws: NetworkError.invalidResponse) {
-            try runner.validate(response)
+            try runner.validate(response, data: Data())
         }
     }
 
     // MARK: - Helpers
 
-    private func makeHTTPResponse(statusCode: Int) -> URLResponse {
+    private func makeHTTPResponse(
+        statusCode: Int,
+        headerFields: [String: String]? = nil
+    ) -> URLResponse {
         HTTPURLResponse(
             url: URL(string: "https://example.com")!,
             statusCode: statusCode,
             httpVersion: nil,
-            headerFields: nil
+            headerFields: headerFields
         )!
     }
 }

@@ -133,9 +133,19 @@ public final class NetworkClient: NetRunner, Sendable {
         makeUploadStream(request: request) { _ in () }
     }
 
+    /// Validates an HTTP response and response body using NetRunner's default
+    /// status-code mapping.
+    public func validate(_ response: URLResponse, data: Data) throws {
+        try HTTPResponseValidator.validate(response, data: data)
+    }
+
     /// Validates an HTTP response using NetRunner's default status-code mapping.
+    ///
+    /// Use `validate(_:data:)` when response body data is available so HTTP
+    /// errors can preserve the server's response body.
+    @available(*, deprecated, message: "Use validate(_:data:) to preserve HTTP error response bodies.")
     public func validate(_ response: URLResponse) throws {
-        try HTTPResponseValidator.validate(response)
+        try validate(response, data: Data())
     }
 
     // MARK: - Private
@@ -231,7 +241,7 @@ public final class NetworkClient: NetRunner, Sendable {
             let urlRequest = try await makeRequest()
             do {
                 let (data, response) = try await operation(urlRequest, attemptIndex)
-                try validate(response)
+                try validate(response, data: data)
                 return data
             } catch is CancellationError {
                 throw CancellationError()

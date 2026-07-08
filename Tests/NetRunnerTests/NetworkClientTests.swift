@@ -102,7 +102,7 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 401)
         let client = makeClient(session: session)
 
-        await #expect(throws: NetworkError.unauthorized) {
+        await #expect(throws: NetworkError.unauthorized(response: makeTestHTTPErrorResponse(statusCode: 401))) {
             try await client.execute(request: TestNetworkRequest())
         }
     }
@@ -111,8 +111,34 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 404)
         let client = makeClient(session: session)
 
-        await #expect(throws: NetworkError.clientError(statusCode: 404)) {
+        await #expect(throws: NetworkError.clientError(response: makeTestHTTPErrorResponse(statusCode: 404))) {
             try await client.execute(request: TestNetworkRequest())
+        }
+    }
+
+    @Test func execute422ThrowsClientErrorContainingResponseBody() async {
+        let body = Data(
+            #"""
+            {
+                "success": false,
+                "message": [
+                    "This social account is already connected to komlive24+222_42@gmail.com Gipper account(s)."
+                ]
+            }
+            """#.utf8
+        )
+        let session = stubbedSession(statusCode: 422, data: body)
+        let client = makeClient(session: session)
+
+        do {
+            try await client.execute(request: TestNetworkRequest())
+            Issue.record("Expected request to throw a 422 client error")
+        } catch NetworkError.clientError(let response) {
+            #expect(response.statusCode == 422)
+            #expect(response.body == body)
+            #expect(response.bodyText()?.contains("This social account is already connected") == true)
+        } catch {
+            Issue.record("Expected client error, got \(error)")
         }
     }
 
@@ -120,7 +146,7 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 503)
         let client = makeClient(session: session)
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest())
         }
     }
@@ -132,7 +158,7 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 503)
         let client = makeClient(session: session, retryPolicy: .exponential(maxAttempts: 3, baseDelay: 0))
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest())
         }
         #expect(session.callCount == 4, "1 initial + 3 retries = 4")
@@ -178,7 +204,7 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 503)
         let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest(method: .post))
         }
 
@@ -192,7 +218,7 @@ struct NetworkClientTests {
             retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post])
         )
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest(method: .post))
         }
 
@@ -209,7 +235,7 @@ struct NetworkClientTests {
             requestInterceptors: [interceptor]
         )
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest())
         }
 
@@ -610,7 +636,7 @@ struct NetworkClientTests {
             responseInterceptors: [responseInterceptor]
         )
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest())
         }
 

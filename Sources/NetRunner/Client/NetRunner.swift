@@ -18,8 +18,9 @@ public protocol NetRunner {
     ) -> AsyncThrowingStream<UploadEvent<T>, Error>
     /// Uploads a request without decoding a response body.
     func upload(request: any UploadRequest) -> AsyncThrowingStream<UploadEvent<Void>, Error>
-    /// Validates the URL response, throwing a `NetworkError` for non-success status codes.
-    func validate(_ response: URLResponse) throws
+    /// Validates the URL response and response body, throwing a `NetworkError`
+    /// for non-success status codes.
+    func validate(_ response: URLResponse, data: Data) throws
 }
 
 public extension NetRunner {
@@ -28,19 +29,28 @@ public extension NetRunner {
         let urlRequest = try request.makeURLRequest()
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
 
-        try validate(response)
+        try validate(response, data: data)
         return try decodeResponseData(data, decoder: request.decoder)
     }
 
     func execute(request: any NetworkRequest) async throws {
         let urlRequest = try request.makeURLRequest()
-        let (_, response) = try await URLSession.shared.data(for: urlRequest)
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
 
-        try validate(response)
+        try validate(response, data: data)
     }
 
+    func validate(_ response: URLResponse, data: Data) throws {
+        try HTTPResponseValidator.validate(response, data: data)
+    }
+
+    /// Validates the URL response, throwing a `NetworkError` for non-success status codes.
+    ///
+    /// Use `validate(_:data:)` when response body data is available so HTTP
+    /// errors can preserve the server's response body.
+    @available(*, deprecated, message: "Use validate(_:data:) to preserve HTTP error response bodies.")
     func validate(_ response: URLResponse) throws {
-        try HTTPResponseValidator.validate(response)
+        try validate(response, data: Data())
     }
 }
 
@@ -107,7 +117,7 @@ public extension NetRunner where Self: Sendable {
                 )
             )
         }
-        try validate(response)
+        try validate(response, data: data)
         return data
     }
 }

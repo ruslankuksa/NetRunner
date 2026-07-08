@@ -131,12 +131,35 @@ struct UploadTests {
             uploadBody: .data(data: Data("failed-bytes".utf8), contentType: nil)
         )
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             _ = try await collect(client.upload(request: request))
         }
 
         let temporaryUploadFile = try #require(session.capturedUploadFileURLs.first)
         #expect(!FileManager.default.fileExists(atPath: temporaryUploadFile.path))
+    }
+
+    @Test func dataUpload422ThrowsClientErrorContainingResponseBody() async {
+        let body = Data(#"{"success":false,"message":["Already connected"]}"#.utf8)
+        let session = MockURLSession()
+        session.stub(statusCode: 422)
+        session.stubbedData = body
+        let client = NetworkClient(session: session)
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .data(data: Data("failed-bytes".utf8), contentType: nil)
+        )
+
+        do {
+            _ = try await collect(client.upload(request: request))
+            Issue.record("Expected upload to throw a 422 client error")
+        } catch NetworkError.clientError(let response) {
+            #expect(response.statusCode == 422)
+            #expect(response.body == body)
+            #expect(response.bodyText() == #"{"success":false,"message":["Already connected"]}"#)
+        } catch {
+            Issue.record("Expected client error, got \(error)")
+        }
     }
 
     // MARK: - Raw file uploads
@@ -266,7 +289,7 @@ struct UploadTests {
             )
         )
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             _ = try await collect(client.upload(request: request))
         }
 
@@ -455,7 +478,7 @@ struct UploadTests {
         )
 
         var progress: [UploadProgress] = []
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             for try await event in client.upload(request: request) {
                 if case .progress(let uploadProgress) = event {
                     progress.append(uploadProgress)
@@ -509,7 +532,7 @@ struct UploadTests {
             uploadBody: .rawFile(fileURL: uploadFile, contentType: nil)
         )
 
-        await #expect(throws: NetworkError.serverError(statusCode: 503)) {
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             _ = try await collect(client.upload(request: request))
         }
 

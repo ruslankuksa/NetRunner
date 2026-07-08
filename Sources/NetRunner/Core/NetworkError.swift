@@ -5,7 +5,7 @@ import Foundation
 public enum NetworkError: LocalizedError, Equatable, Sendable {
     /// The constructed URL is not valid.
     case invalidURL
-    /// The request failed with an unexpected status code or error.
+    /// The request failed with an unhandled error.
     case requestFailed(String)
     /// The server returned a response that is not a valid HTTP response.
     case invalidResponse
@@ -16,15 +16,17 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
     /// An upload body was set on a GET request, which is not allowed.
     case uploadBodyNotAllowedForGET
     /// The server returned HTTP 401 Unauthorized.
-    case unauthorized
+    case unauthorized(response: HTTPErrorResponse)
     /// The request timed out.
     case timeout
     /// The device has no network connectivity.
     case noConnectivity
     /// The server returned a 5xx status code.
-    case serverError(statusCode: Int)
+    case serverError(response: HTTPErrorResponse)
     /// The server returned a 4xx status code (other than 401).
-    case clientError(statusCode: Int)
+    case clientError(response: HTTPErrorResponse)
+    /// The server returned an HTTP status code outside NetRunner's standard mappings.
+    case unexpectedStatusCode(response: HTTPErrorResponse)
 
     public var errorDescription: String? {
         switch self {
@@ -46,10 +48,12 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
             return "The request timed out"
         case .noConnectivity:
             return "No network connectivity"
-        case .serverError(let statusCode):
-            return "Server error: \(statusCode)"
-        case .clientError(let statusCode):
-            return "Client error: \(statusCode)"
+        case .serverError(let response):
+            return "Server error: \(response.statusCode)"
+        case .clientError(let response):
+            return "Client error: \(response.statusCode)"
+        case .unexpectedStatusCode(let response):
+            return "Unexpected HTTP status code: \(response.statusCode)"
         }
     }
 
@@ -60,11 +64,12 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
         case (.invalidResponse, .invalidResponse): return true
         case (.httpBodyNotAllowedForGET, .httpBodyNotAllowedForGET): return true
         case (.uploadBodyNotAllowedForGET, .uploadBodyNotAllowedForGET): return true
-        case (.unauthorized, .unauthorized): return true
+        case (.unauthorized(let a), .unauthorized(let b)): return a == b
         case (.timeout, .timeout): return true
         case (.noConnectivity, .noConnectivity): return true
         case (.serverError(let a), .serverError(let b)): return a == b
         case (.clientError(let a), .clientError(let b)): return a == b
+        case (.unexpectedStatusCode(let a), .unexpectedStatusCode(let b)): return a == b
         case (.decodingFailed, .decodingFailed): return true
         default: return false
         }

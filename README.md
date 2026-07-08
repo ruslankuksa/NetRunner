@@ -255,7 +255,7 @@ Veto a retry after a failure — useful for token-refresh logic or circuit break
 ```swift
 struct TokenRefreshInterceptor: ResponseInterceptor {
     func shouldRetry(context: RetryContext) async -> Bool {
-        guard context.error == .unauthorized else { return true }
+        guard case .unauthorized = context.error else { return true }
         return await refreshToken()
     }
 }
@@ -301,12 +301,15 @@ struct CatalogRequest: NetworkRequest {
 ```swift
 do {
     let user: User = try await client.execute(request: GetUserRequest(id: "42"))
-} catch NetworkError.unauthorized {
+} catch NetworkError.unauthorized(response: let response) {
     // 401
-} catch NetworkError.clientError(let statusCode) {
+    print(response.statusCode)
+} catch NetworkError.clientError(response: let response) {
     // 400–499 (except 401)
-} catch NetworkError.serverError(let statusCode) {
+    print(response.statusCode)
+} catch NetworkError.serverError(response: let response) {
     // 500–599
+    print(response.statusCode)
 } catch NetworkError.timeout {
     // URLError.timedOut
 } catch NetworkError.noConnectivity {
@@ -316,21 +319,42 @@ do {
 }
 ```
 
+HTTP errors preserve the raw response body so apps can decode their own API-specific error schema.
+Raw response bodies may contain personal data, tokens, or backend diagnostics; avoid logging or persisting them unless they are redacted.
+
+```swift
+struct APIErrorResponse: Decodable {
+    let success: Bool
+    let message: [String]
+}
+
+do {
+    let user: User = try await client.execute(request: ConnectSocialAccountRequest())
+} catch NetworkError.clientError(response: let response) where response.statusCode == 422 {
+    if let apiError = try? JSONDecoder().decode(APIErrorResponse.self, from: response.body) {
+        print(apiError.message.joined(separator: "\n"))
+    }
+}
+```
+
 ### `NetworkError` reference
 
 | Case | Description |
 |------|-------------|
 | `.invalidURL` | The URL string could not be parsed |
-| `.requestFailed(String)` | Unhandled HTTP status or URL error |
+| `.requestFailed(String)` | Unhandled request or URL error |
 | `.invalidResponse` | Response was not an `HTTPURLResponse` |
 | `.decodingFailed(Error)` | JSON decoding failed |
 | `.httpBodyNotAllowedForGET` | `httpBody` set on a GET request |
 | `.uploadBodyNotAllowedForGET` | Upload body set on a GET request |
-| `.unauthorized` | HTTP 401 |
-| `.clientError(statusCode:)` | HTTP 400–499 (except 401) |
-| `.serverError(statusCode:)` | HTTP 500–599 |
+| `.unauthorized(response:)` | HTTP 401 with response details |
+| `.clientError(response:)` | HTTP 400–499 (except 401) with response details |
+| `.serverError(response:)` | HTTP 500–599 with response details |
+| `.unexpectedStatusCode(response:)` | HTTP status outside NetRunner's standard mappings |
 | `.timeout` | Request timed out |
 | `.noConnectivity` | No internet connection |
+
+`HTTPErrorResponse` contains `statusCode`, raw `body`, `headers`, and `bodyText(encoding:)`.
 
 ---
 

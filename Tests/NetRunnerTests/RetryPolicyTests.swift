@@ -70,9 +70,9 @@ struct RetryPolicyTests {
     @Test(arguments: [
         (NetworkError.timeout, true),
         (NetworkError.noConnectivity, true),
-        (NetworkError.serverError(statusCode: 503), true),
-        (NetworkError.clientError(statusCode: 404), false),
-        (NetworkError.unauthorized, false),
+        (NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503)), true),
+        (NetworkError.clientError(response: makeTestHTTPErrorResponse(statusCode: 404)), false),
+        (NetworkError.unauthorized(response: makeTestHTTPErrorResponse(statusCode: 401)), false),
         (NetworkError.decodingFailed(NSError(domain: "d", code: 1)), false),
         (NetworkError.invalidURL, false),
     ])
@@ -87,6 +87,9 @@ struct RetryPolicyTests {
         #expect(policy.isRetryable(error: .timeout, method: .get))
         #expect(!policy.isRetryable(error: .timeout, method: .post))
         #expect(!policy.isRetryable(error: .timeout, method: nil))
-        #expect(!policy.isRetryable(error: .clientError(statusCode: 404), method: .get))
+        #expect(!policy.isRetryable(
+            error: .clientError(response: makeTestHTTPErrorResponse(statusCode: 404)),
+            method: .get
+        ))
     }
 }
