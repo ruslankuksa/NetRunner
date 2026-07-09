@@ -15,7 +15,7 @@ struct NetworkRequestTests {
 
     @Test func makeURLRequestAcceptsDifferentEndpointTypes() throws {
         struct SearchEndpoint: Endpoint {
-            var path: String { "/search" }
+            var path: RequestPath { "/search" }
         }
 
         let req = TestNetworkRequest(
@@ -39,15 +39,55 @@ struct NetworkRequestTests {
         #expect(urlReq.url != nil)
     }
 
+    @Test func makeURLRequestPreservesBaseURLPathAndNormalizesSlashes() throws {
+        let req = TestNetworkRequest(
+            baseURL: URL(string: "https://api.example.com/v1/")!,
+            endpoint: TestEndpoint("users")
+        )
+
+        let urlReq = try req.makeURLRequest()
+
+        #expect(urlReq.url?.absoluteString == "https://api.example.com/v1/users")
+    }
+
+    @Test func makeURLRequestRejectsEndpointQueryAndFragment() {
+        let queryRequest = TestNetworkRequest(endpoint: TestEndpoint("/users?name=blob"))
+        let fragmentRequest = TestNetworkRequest(endpoint: TestEndpoint("/users#details"))
+
+        #expect(throws: NetworkError.invalidURL) {
+            try queryRequest.makeURLRequest()
+        }
+        #expect(throws: NetworkError.invalidURL) {
+            try fragmentRequest.makeURLRequest()
+        }
+    }
+
+    @Test func makeURLRequestRejectsEndpointSchemeAndHost() {
+        let absoluteURLRequest = TestNetworkRequest(endpoint: TestEndpoint("https://evil.example/users"))
+
+        #expect(throws: NetworkError.invalidURL) {
+            try absoluteURLRequest.makeURLRequest()
+        }
+    }
+
     // MARK: - ArrayEncoding
 
     @Test func arrayEncodingBrackets() throws {
         let req = TestNetworkRequest(parameters: ["ids": [1, 2, 3]], arrayEncoding: .brackets)
         let urlReq = try req.makeURLRequest()
         let query = urlReq.url?.query ?? ""
-        #expect(query.contains("ids=1"), "query: \(query)")
-        #expect(query.contains("ids=2"), "query: \(query)")
-        #expect(query.contains("ids=3"), "query: \(query)")
+        #expect(query.contains("ids%5B%5D=1"), "query: \(query)")
+        #expect(query.contains("ids%5B%5D=2"), "query: \(query)")
+        #expect(query.contains("ids%5B%5D=3"), "query: \(query)")
+    }
+
+    @Test func arrayEncodingBracketsDoesNotDoubleBracketKeys() throws {
+        let req = TestNetworkRequest(parameters: ["ids[]": [1, 2]], arrayEncoding: .brackets)
+        let urlReq = try req.makeURLRequest()
+        let query = urlReq.url?.query ?? ""
+        #expect(query.contains("ids%5B%5D=1"), "query: \(query)")
+        #expect(query.contains("ids%5B%5D=2"), "query: \(query)")
+        #expect(query.contains("ids%5B%5D%5B%5D") == false, "query: \(query)")
     }
 
     @Test func arrayEncodingNoBrackets() throws {
@@ -65,6 +105,25 @@ struct NetworkRequestTests {
         let urlReq = try req.makeURLRequest()
         let query = urlReq.url?.query ?? ""
         #expect(query.contains("ids=1,2,3"), "values should be comma-separated, got: \(query)")
+    }
+
+    @Test func queryParametersEncodeSupportedScalarValues() throws {
+        let req = TestNetworkRequest(
+            parameters: [
+                "name": "Blob",
+                "page": 2,
+                "ratio": 1.5,
+                "active": true,
+            ]
+        )
+
+        let urlReq = try req.makeURLRequest()
+        let query = urlReq.url?.query ?? ""
+
+        #expect(query.contains("name=Blob"), "query: \(query)")
+        #expect(query.contains("page=2"), "query: \(query)")
+        #expect(query.contains("ratio=1.5"), "query: \(query)")
+        #expect(query.contains("active=true"), "query: \(query)")
     }
 
     // MARK: - GET + body throws

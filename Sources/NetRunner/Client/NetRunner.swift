@@ -1,131 +1,20 @@
-
 import Foundation
 
-/// Adopted by network service types to gain default request implementations.
-///
-/// `Sendable` conformers also gain default upload implementations backed by
-/// `URLSession.shared`.
-public protocol NetRunner {
+/// A type that executes NetRunner requests.
+public protocol NetRunner: Sendable {
     /// Executes a request and decodes the response into the specified `Decodable` type.
     func execute<T: Decodable>(request: any NetworkRequest) async throws -> T
+
     /// Executes a request without decoding a response body.
     func execute(request: any NetworkRequest) async throws
+
     /// Uploads a request and decodes the response into the specified `Decodable`
     /// and `Sendable` type.
     func upload<T: Decodable & Sendable>(
         request: any UploadRequest,
         responseType: T.Type
     ) -> AsyncThrowingStream<UploadEvent<T>, Error>
+
     /// Uploads a request without decoding a response body.
     func upload(request: any UploadRequest) -> AsyncThrowingStream<UploadEvent<Void>, Error>
-    /// Validates the URL response and response body, throwing a `NetworkError`
-    /// for non-success status codes.
-    func validate(_ response: URLResponse, data: Data) throws
-}
-
-public extension NetRunner {
-
-    func execute<T: Decodable>(request: any NetworkRequest) async throws -> T {
-        let urlRequest = try request.makeURLRequest()
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
-
-        try validate(response, data: data)
-        return try decodeResponseData(data, decoder: request.decoder)
-    }
-
-    func execute(request: any NetworkRequest) async throws {
-        let urlRequest = try request.makeURLRequest()
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
-
-        try validate(response, data: data)
-    }
-
-    func validate(_ response: URLResponse, data: Data) throws {
-        try HTTPResponseValidator.validate(response, data: data)
-    }
-
-    /// Validates the URL response, throwing a `NetworkError` for non-success status codes.
-    ///
-    /// Use `validate(_:data:)` when response body data is available so HTTP
-    /// errors can preserve the server's response body.
-    @available(*, deprecated, message: "Use validate(_:data:) to preserve HTTP error response bodies.")
-    func validate(_ response: URLResponse) throws {
-        try validate(response, data: Data())
-    }
-}
-
-public extension NetRunner where Self: Sendable {
-
-    func upload<T: Decodable & Sendable>(
-        request: any UploadRequest,
-        responseType: T.Type = T.self
-    ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
-        let decoder = request.decoder
-        return makeUploadStream(request: request) { data in
-            try decodeResponseData(data, decoder: decoder)
-        }
-    }
-
-    func upload(request: any UploadRequest) -> AsyncThrowingStream<UploadEvent<Void>, Error> {
-        makeUploadStream(request: request) { _ in () }
-    }
-
-    private func makeUploadStream<T: Sendable>(
-        request: any UploadRequest,
-        decode: @escaping @Sendable (Data) throws -> T
-    ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let data = try await performUpload(request) { progress in
-                        continuation.yield(.progress(progress))
-                    }
-                    let response = try decode(data)
-                    continuation.yield(.response(response))
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
-    }
-
-    private func performUpload(
-        _ uploadRequest: any UploadRequest,
-        progress: @escaping @Sendable (UploadProgress) -> Void
-    ) async throws -> Data {
-        let preparedUpload = try await Task.detached(priority: .utility) {
-            try UploadRequestPreparer.prepare(uploadRequest)
-        }.value
-        defer {
-            UploadRequestPreparer.removeTemporaryFile(for: preparedUpload)
-        }
-
-        let (data, response) = try await URLSession.shared.upload(
-            for: preparedUpload.request,
-            fromFile: preparedUpload.fileURL
-        ) { bytesSent, totalBytesExpectedToSend in
-            progress(
-                UploadProgress(
-                    bytesSent: bytesSent,
-                    totalBytesExpectedToSend: totalBytesExpectedToSend,
-                    attemptIndex: 0
-                )
-            )
-        }
-        try validate(response, data: data)
-        return data
-    }
-}
-
-private func decodeResponseData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
-    do {
-        return try decoder.decode(T.self, from: data)
-    } catch {
-        throw NetworkError.decodingFailed(error)
-    }
 }

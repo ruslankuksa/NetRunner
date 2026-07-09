@@ -1,6 +1,6 @@
 import Foundation
 
-/// Context passed to a `ResponseInterceptor` when deciding whether to retry a failed request.
+/// Context passed to a `RetryInterceptor` when deciding whether to retry a failed request.
 public struct RetryContext: Sendable {
     public let request: URLRequest
     /// Zero-based index of the current retry attempt.

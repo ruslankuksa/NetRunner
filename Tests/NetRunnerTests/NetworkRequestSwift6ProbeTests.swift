@@ -84,15 +84,13 @@ struct NetworkRequestSwift6ProbeTests {
         import NetRunner
 
         private struct ProbeEndpoint: Endpoint {
-            let path = "/probe"
+            let path: RequestPath = "/probe"
         }
 
         private struct BodylessRequest: NetworkRequest {
             let baseURL = URL(string: "https://example.com")!
             let method: HTTPMethod = .get
             let endpoint: any Endpoint = ProbeEndpoint()
-            let headers: HTTPHeaders? = nil
-            let parameters: QueryParameters? = nil
         }
 
         private struct Payload: Encodable, Sendable {
@@ -103,8 +101,6 @@ struct NetworkRequestSwift6ProbeTests {
             let baseURL = URL(string: "https://example.com")!
             let method: HTTPMethod = .post
             let endpoint: any Endpoint = ProbeEndpoint()
-            let headers: HTTPHeaders? = nil
-            let parameters: QueryParameters? = nil
             private let body = Payload(id: 1)
 
             var httpBody: (any Encodable & Sendable)? {

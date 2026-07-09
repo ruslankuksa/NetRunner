@@ -1,8 +1,12 @@
 # NetRunner
 
-A zero-dependency Swift networking library built around protocol-oriented request, upload, retry, and interceptor APIs, with `NetworkClient` as the concrete convenience client.
+A zero-dependency Swift networking library for Apple platforms, built around
+protocol-oriented request, upload, retry, and interceptor APIs, with
+`NetworkClient` as the concrete convenience client.
 
 ## Requirements
+
+NetRunner supports Apple platforms only.
 
 | Platform | Minimum |
 |----------|---------|
@@ -41,7 +45,7 @@ enum UserEndpoint: Endpoint {
     case profile(id: String)
     case list
 
-    var path: String {
+    var path: RequestPath {
         switch self {
         case .profile(let id): return "/users/\(id)"
         case .list:            return "/users"
@@ -58,7 +62,6 @@ struct GetUserRequest: NetworkRequest {
     var method: HTTPMethod { .get }
     var endpoint: any Endpoint
     var headers: HTTPHeaders? = ["Accept": "application/json"]
-    var parameters: QueryParameters? = nil
 
     init(id: String) {
         endpoint = UserEndpoint.profile(id: id)
@@ -79,7 +82,6 @@ struct UpdateUserRequest: NetworkRequest {
     var method: HTTPMethod { .put }
     var endpoint: any Endpoint
     var headers: HTTPHeaders? = ["Content-Type": "application/json"]
-    var parameters: QueryParameters? = nil
     private let body: Body
 
     var httpBody: (any Encodable & Sendable)? {
@@ -107,19 +109,39 @@ let client = NetworkClient()
 let user: User = try await client.execute(request: GetUserRequest(id: "42"))
 ```
 
-Or conform your own type to `NetRunner` (iOS 13.4+):
-
-```swift
-struct APIClient: NetRunner {}
-
-let user: User = try await APIClient().execute(request: GetUserRequest(id: "42"))
-```
-
 For endpoints that do not return a response body, use the same method without
 assigning a decoded result:
 
 ```swift
 try await client.execute(request: UpdateUserRequest(id: "42"))
+```
+
+---
+
+## Request construction
+
+Endpoint paths use `RequestPath`, not arbitrary URL strings. Paths may include
+or omit the leading slash, but they must not include a scheme, host, query, or
+fragment. `NetworkClient` preserves any path already present on `baseURL` and
+normalizes slashes centrally.
+
+```swift
+let baseURL = URL(string: "https://api.example.com/v1")!
+let endpoint: RequestPath = "users/42"
+// https://api.example.com/v1/users/42
+```
+
+Put query data in `parameters`. `QueryParameters` stores typed `QueryValue`
+values for strings, integers, doubles, booleans, and arrays, so query encoding
+is explicit under Swift concurrency checking.
+
+```swift
+var parameters: QueryParameters? {
+    [
+        "ids": [1, 2, 3],
+        "includeArchived": false
+    ]
+}
 ```
 
 ---
@@ -134,37 +156,59 @@ public final class NetworkClient: NetRunner, Sendable {
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
         requestInterceptors: [any RequestInterceptor] = [],
-        responseInterceptors: [any ResponseInterceptor] = [],
+        retryInterceptors: [any RetryInterceptor] = [],
+        responseValidator: any ResponseValidator = DefaultResponseValidator(),
+        defaultDecoder: JSONDecoder = JSONDecoder(),
+        defaultEncoder: JSONEncoder = JSONEncoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil
     )
 }
 ```
 
+`NetworkClient` is the first-class execution path for requests and uploads. Use
+it when you need injected sessions, retry policies, interceptors, uploads,
+connectivity retry, custom validation, or JSON coder configuration.
+
 ### Retry
 
 ```swift
 // Retry up to 3 times with exponential back-off starting at 1 second
 let client = NetworkClient(
-    retryPolicy: .exponential(maxAttempts: 3, baseDelay: 1.0)
+    retryPolicy: .exponential(maxRetries: 3, baseDelay: 1.0)
 )
 
 // Retry up to 5 times with a fixed 2-second delay
 let client = NetworkClient(
-    retryPolicy: .fixed(maxAttempts: 5, delay: 2.0)
+    retryPolicy: .fixed(maxRetries: 5, delay: 2.0)
 )
 ```
 
 Retry is only attempted for transient errors: `.timeout`, `.noConnectivity`, `.serverError`. Client errors (4xx) and decode errors are never retried. Transport failures from `URLSession`, such as `URLError(.timedOut)` and `URLError(.notConnectedToInternet)`, are mapped to `NetworkError` before retry decisions.
 
-Automatic retries default to idempotent HTTP methods: `.get`, `.put`, and `.delete`. If a request is safe to replay for your backend, opt in explicitly. If a request interceptor changes the `URLRequest` to an HTTP method NetRunner cannot map to `HTTPMethod`, the attempt is treated as non-retryable.
+Automatic retries default to idempotent HTTP methods: `.get`, `.put`, and
+`.delete`. If a request is safe to replay for your backend, opt in explicitly.
+Custom HTTP methods are supported with `HTTPMethod.custom(_:)` and are
+retryable only when included in `retryableMethods`.
 
 ```swift
 let client = NetworkClient(
     retryPolicy: .fixed(
-        maxAttempts: 1,
+        maxRetries: 1,
         delay: 0,
         retryableMethods: [.post]
+    )
+)
+```
+
+```swift
+let propfind = HTTPMethod.custom("PROPFIND")
+
+let client = NetworkClient(
+    retryPolicy: .fixed(
+        maxRetries: 1,
+        delay: 0,
+        retryableMethods: [propfind]
     )
 )
 ```
@@ -175,7 +219,7 @@ Opt in to waiting for connectivity before retrying requests that fail with `.noC
 
 ```swift
 let client = NetworkClient(
-    connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: 60)
+    connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: 60)
 )
 ```
 
@@ -186,7 +230,7 @@ Connectivity retry uses the same method-safety default as `RetryPolicy`: `.get`,
 ```swift
 let client = NetworkClient(
     connectivityRetryPolicy: .waitUntilConnected(
-        maxAttempts: 1,
+        maxRetries: 1,
         timeout: 60,
         retryableMethods: [.post]
     )
@@ -205,7 +249,7 @@ Use `NetworkPathConnectivityMonitor` directly when the app needs to present offl
 let connectivityMonitor = NetworkPathConnectivityMonitor()
 
 let client = NetworkClient(
-    connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: 60),
+    connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: 60),
     connectivityMonitor: connectivityMonitor
 )
 
@@ -240,9 +284,58 @@ let client = NetworkClient(
 
 Multiple interceptors are applied left-to-right before each attempt, including retry attempts. This lets interceptors read refreshed credentials or regenerate per-attempt signatures.
 
+### JSON coding
+
+Configure JSON coding at the client level when most requests share the same
+encoding rules:
+
+```swift
+let decoder = JSONDecoder()
+decoder.dateDecodingStrategy = .iso8601
+
+let encoder = JSONEncoder()
+encoder.dateEncodingStrategy = .iso8601
+
+let client = NetworkClient(
+    defaultDecoder: decoder,
+    defaultEncoder: encoder
+)
+```
+
+Individual requests can still override `decoder` or `encoder` when one
+endpoint needs different behavior.
+
+### Response validation
+
+`DefaultResponseValidator` maps 2xx responses to success and standard HTTP
+failure ranges to `NetworkError`. Inject a custom validator when an API uses a
+different success envelope or status-code contract:
+
+```swift
+struct AcceptedOnlyValidator: ResponseValidator {
+    func validate(_ response: URLResponse, data: Data) throws {
+        guard let response = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+
+        guard response.statusCode == 202 else {
+            throw NetworkError.unexpectedStatusCode(
+                response: HTTPErrorResponse(
+                    statusCode: response.statusCode,
+                    body: data,
+                    headers: [:]
+                )
+            )
+        }
+    }
+}
+
+let client = NetworkClient(responseValidator: AcceptedOnlyValidator())
+```
+
 ### File uploads
 
-`NetworkClient` and `Sendable` custom `NetRunner` conformers support raw data, raw file, and `multipart/form-data` uploads with progress events. Decoded upload response types must be `Decodable & Sendable` because they are emitted through `AsyncThrowingStream`. On iOS 15 / macOS 12 / tvOS 15 / watchOS 8 and newer, progress comes from `URLSessionTaskDelegate`; on older supported OS versions, `URLSession` only provides a completion progress event.
+`NetworkClient` supports raw data, raw file, and `multipart/form-data` uploads with progress events. Decoded upload response types must be `Decodable & Sendable` because they are emitted through `AsyncThrowingStream`. On iOS 15 / macOS 12 / tvOS 15 / watchOS 8 and newer, progress comes from `URLSessionTaskDelegate`; on older supported OS versions, `URLSession` only provides a completion progress event.
 
 ```swift
 struct AvatarUpload: UploadRequest {
@@ -250,7 +343,6 @@ struct AvatarUpload: UploadRequest {
     var method: HTTPMethod { .post }
     var endpoint: any Endpoint
     var headers: HTTPHeaders? = ["Accept": "application/json"]
-    var parameters: QueryParameters? = nil
     var uploadBody: UploadBody
 
     init(endpoint: any Endpoint = UserEndpoint.profile(id: "42"), uploadBody: UploadBody) {
@@ -286,22 +378,22 @@ for try await event in client.upload(request: request, responseType: User.self) 
 
 For APIs that expect the complete request body directly, use `.data(data:contentType:)` for in-memory bytes or `.rawFile(fileURL:contentType:)` for a local file. Uploads with no response body can call `client.upload(request:)`, which emits `UploadEvent<Void>`. Multipart uploads are prepared once before the first attempt; retries reuse the same temporary file, and NetRunner removes it when the upload finishes or fails.
 
-Custom `NetRunner` conformers that are `Sendable` get default upload implementations backed by `URLSession.shared`. Use `NetworkClient` when uploads need injected sessions, retry policies, or request/response interceptors.
+Upload content headers are finalized after request interceptors run, so multipart boundaries and upload `Content-Length` cannot be accidentally replaced by generic request-signing logic.
 
-### Response interceptors
+### Retry interceptors
 
-Veto a retry after a failure — useful for token-refresh logic or circuit breakers.
+Veto a retry after a retryable failure — useful for circuit breakers or
+request-scoped retry coordination.
 
 ```swift
-struct TokenRefreshInterceptor: ResponseInterceptor {
-    func shouldRetry(context: RetryContext) async -> Bool {
-        guard case .unauthorized = context.error else { return true }
-        return await refreshToken()
+struct CircuitBreakerRetryInterceptor: RetryInterceptor {
+    func retryDecision(for context: RetryContext) async -> RetryDecision {
+        isCircuitOpen ? .doNotRetry : .retry
     }
 }
 ```
 
-All response interceptors must approve (unanimity) for a retry to proceed.
+All retry interceptors must return `.retry` for a retry to proceed.
 
 ### Caching
 
@@ -413,10 +505,10 @@ struct SearchRequest: NetworkRequest {
 
 Default is `.brackets`.
 
-`NetworkRequest` is `Sendable`. `QueryParameters` stores `Sendable` values,
-and request bodies must be `Encodable & Sendable`, so common query literals such
-as strings, numbers, booleans, and arrays of those values work in Swift 5 and
-Swift 6 concurrency checking.
+`NetworkRequest` is `Sendable`. `QueryParameters` stores typed `QueryValue`
+values, so common query literals such as strings, numbers, booleans, and arrays
+of those values have explicit encoding behavior in Swift 5 and Swift 6
+concurrency checking.
 
 ---
 
@@ -430,5 +522,5 @@ mock.stub(statusCode: 200, data: jsonData)
 
 let client = NetworkClient(session: mock)
 let result: User = try await client.execute(request: GetUserRequest(id: "1"))
-XCTAssertEqual(mock.callCount, 1)
+#expect(mock.callCount == 1)
 ```

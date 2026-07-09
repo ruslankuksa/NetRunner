@@ -7,16 +7,16 @@ import Foundation
 // 1. Each test creates its own instance (no cross-test sharing)
 // 2. Configuration happens before the async client call (sequential)
 // 3. Assertions happen after `await` returns (happens-before barrier)
-final class MockResponseInterceptor: ResponseInterceptor, @unchecked Sendable {
-    var shouldRetryResult: Bool
+final class MockRetryInterceptor: RetryInterceptor, @unchecked Sendable {
+    var decision: RetryDecision
     var callCount = 0
 
-    init(shouldRetryResult: Bool = true) {
-        self.shouldRetryResult = shouldRetryResult
+    init(decision: RetryDecision = .retry) {
+        self.decision = decision
     }
 
-    func shouldRetry(context: RetryContext) async -> Bool {
+    func retryDecision(for context: RetryContext) async -> RetryDecision {
         callCount += 1
-        return shouldRetryResult
+        return decision
     }
 }

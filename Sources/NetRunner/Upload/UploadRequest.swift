@@ -11,14 +11,22 @@ public protocol UploadRequest: Sendable {
     var parameters: QueryParameters? { get }
     var uploadBody: UploadBody { get }
 
-    var decoder: JSONDecoder { get }
+    var decoder: JSONDecoder? { get }
     var arrayEncoding: ArrayEncoding { get }
     var cachePolicy: URLRequest.CachePolicy { get }
 }
 
 public extension UploadRequest {
-    var decoder: JSONDecoder {
-        return .init()
+    var headers: HTTPHeaders? {
+        nil
+    }
+
+    var parameters: QueryParameters? {
+        nil
+    }
+
+    var decoder: JSONDecoder? {
+        nil
     }
 
     var arrayEncoding: ArrayEncoding {

@@ -25,13 +25,16 @@ private enum ConnectivityMonitorStorage: Sendable {
 }
 
 /// A concrete `NetRunner` client that executes requests with an injected session,
-/// retry policy, and request/response interceptors.
+/// retry policy, validator, and interceptors.
 public final class NetworkClient: NetRunner, Sendable {
 
     private let session: any URLSessionProtocol
     private let retryPolicy: RetryPolicy
     private let requestInterceptors: [any RequestInterceptor]
-    private let responseInterceptors: [any ResponseInterceptor]
+    private let retryInterceptors: [any RetryInterceptor]
+    private let responseValidator: any ResponseValidator
+    private let defaultDecoder: JSONDecoder
+    private let defaultEncoder: JSONEncoder
     private let connectivityRetryPolicy: ConnectivityRetryPolicy
     private let connectivityMonitorStorage: ConnectivityMonitorStorage
 
@@ -45,7 +48,10 @@ public final class NetworkClient: NetRunner, Sendable {
     ///   - session: The URL session abstraction used to execute data and upload requests.
     ///   - retryPolicy: The retry policy applied to retryable HTTP and transport failures.
     ///   - requestInterceptors: Interceptors applied before each request attempt.
-    ///   - responseInterceptors: Interceptors that approve or veto retry attempts.
+    ///   - retryInterceptors: Interceptors that decide whether retry attempts may proceed.
+    ///   - responseValidator: The validator used to map URL responses to success or thrown errors.
+    ///   - defaultDecoder: The decoder used when a request does not provide its own decoder.
+    ///   - defaultEncoder: The encoder used when a request does not provide its own encoder.
     ///   - connectivityRetryPolicy: The retry policy for no-connectivity failures.
     ///   - connectivityMonitor: The monitor used to wait for connectivity restoration. When
     ///     omitted, `NetworkClient` creates one only if connectivity retry is enabled.
@@ -53,7 +59,10 @@ public final class NetworkClient: NetRunner, Sendable {
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
         requestInterceptors: [any RequestInterceptor] = [],
-        responseInterceptors: [any ResponseInterceptor] = [],
+        retryInterceptors: [any RetryInterceptor] = [],
+        responseValidator: any ResponseValidator = DefaultResponseValidator(),
+        defaultDecoder: JSONDecoder = JSONDecoder(),
+        defaultEncoder: JSONEncoder = JSONEncoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil
     ) {
@@ -61,7 +70,10 @@ public final class NetworkClient: NetRunner, Sendable {
             session: session,
             retryPolicy: retryPolicy,
             requestInterceptors: requestInterceptors,
-            responseInterceptors: responseInterceptors,
+            retryInterceptors: retryInterceptors,
+            responseValidator: responseValidator,
+            defaultDecoder: defaultDecoder,
+            defaultEncoder: defaultEncoder,
             connectivityRetryPolicy: connectivityRetryPolicy,
             connectivityMonitor: connectivityMonitor,
             connectivityMonitorFactory: { NetworkPathConnectivityMonitor() }
@@ -72,7 +84,10 @@ public final class NetworkClient: NetRunner, Sendable {
         session: any URLSessionProtocol = URLSession.shared,
         retryPolicy: RetryPolicy = .none,
         requestInterceptors: [any RequestInterceptor] = [],
-        responseInterceptors: [any ResponseInterceptor] = [],
+        retryInterceptors: [any RetryInterceptor] = [],
+        responseValidator: any ResponseValidator = DefaultResponseValidator(),
+        defaultDecoder: JSONDecoder = JSONDecoder(),
+        defaultEncoder: JSONEncoder = JSONEncoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil,
         connectivityMonitorFactory: () -> any CancellableConnectivityMonitor
@@ -80,12 +95,15 @@ public final class NetworkClient: NetRunner, Sendable {
         self.session = session
         self.retryPolicy = retryPolicy
         self.requestInterceptors = requestInterceptors
-        self.responseInterceptors = responseInterceptors
+        self.retryInterceptors = retryInterceptors
+        self.responseValidator = responseValidator
+        self.defaultDecoder = defaultDecoder
+        self.defaultEncoder = defaultEncoder
         self.connectivityRetryPolicy = connectivityRetryPolicy
 
         if let connectivityMonitor {
             self.connectivityMonitorStorage = .injected(connectivityMonitor)
-        } else if case .waitUntilConnected = connectivityRetryPolicy {
+        } else if connectivityRetryPolicy.isEnabled {
             let ownedConnectivityMonitor = connectivityMonitorFactory()
             self.connectivityMonitorStorage = .owned(ownedConnectivityMonitor)
         } else {
@@ -104,7 +122,7 @@ public final class NetworkClient: NetRunner, Sendable {
     /// Executes a request and decodes its successful response body.
     public func execute<T: Decodable>(request: any NetworkRequest) async throws -> T {
         let data = try await performRequest(request)
-        return try Self.decodeData(data, decoder: request.decoder)
+        return try Self.decodeData(data, decoder: request.decoder ?? defaultDecoder)
     }
 
     /// Executes a request that does not require a decoded response body.
@@ -120,7 +138,7 @@ public final class NetworkClient: NetRunner, Sendable {
         request: any UploadRequest,
         responseType: T.Type = T.self
     ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
-        let decoder = request.decoder
+        let decoder = request.decoder ?? defaultDecoder
         return makeUploadStream(request: request) { data in
             try Self.decodeData(data, decoder: decoder)
         }
@@ -136,7 +154,7 @@ public final class NetworkClient: NetRunner, Sendable {
     /// Validates an HTTP response and response body using NetRunner's default
     /// status-code mapping.
     public func validate(_ response: URLResponse, data: Data) throws {
-        try HTTPResponseValidator.validate(response, data: data)
+        try responseValidator.validate(response, data: data)
     }
 
     /// Validates an HTTP response using NetRunner's default status-code mapping.
@@ -151,7 +169,7 @@ public final class NetworkClient: NetRunner, Sendable {
     // MARK: - Private
 
     private func performRequest(_ networkRequest: any NetworkRequest) async throws -> Data {
-        let baseRequest = try networkRequest.makeURLRequest()
+        let baseRequest = try makeURLRequest(networkRequest)
 
         return try await performWithRetry(
             makeRequest: {
@@ -161,6 +179,25 @@ public final class NetworkClient: NetRunner, Sendable {
                 try await session.data(for: urlRequest)
             }
         )
+    }
+
+    private func makeURLRequest(_ networkRequest: any NetworkRequest) throws -> URLRequest {
+        var request = try URLRequestBuilder.makeURLRequest(
+            baseURL: networkRequest.baseURL,
+            path: networkRequest.endpoint.path,
+            method: networkRequest.method,
+            headers: networkRequest.headers,
+            parameters: networkRequest.parameters,
+            arrayEncoding: networkRequest.arrayEncoding,
+            cachePolicy: networkRequest.cachePolicy
+        )
+        if let httpBody = networkRequest.httpBody {
+            guard networkRequest.method != .get else {
+                throw NetworkError.httpBodyNotAllowedForGET
+            }
+            request.httpBody = try (networkRequest.encoder ?? defaultEncoder).encode(httpBody)
+        }
+        return request
     }
 
     private func requestAfterInterceptors(_ request: URLRequest) async throws -> URLRequest {
@@ -213,8 +250,10 @@ public final class NetworkClient: NetRunner, Sendable {
                 try await requestAfterInterceptors(baseRequest)
             },
             operation: { urlRequest, attemptIndex in
-                try await session.upload(
-                    for: urlRequest,
+                var uploadRequest = urlRequest
+                preparedUpload.finalize(&uploadRequest)
+                return try await session.upload(
+                    for: uploadRequest,
                     fromFile: preparedUpload.fileURL
                 ) { bytesSent, totalBytesExpectedToSend in
                     progress(
@@ -259,7 +298,7 @@ public final class NetworkClient: NetRunner, Sendable {
                     continue
                 }
 
-                let shouldRetryByPolicy = retryAttemptIndex < retryPolicy.maxAttempts
+                let shouldRetryByPolicy = retryAttemptIndex < retryPolicy.maxRetries
                     && retryPolicy.isRetryable(
                         error: networkError,
                         method: Self.httpMethod(from: urlRequest)
@@ -274,7 +313,7 @@ public final class NetworkClient: NetRunner, Sendable {
                     attemptIndex: attemptIndex,
                     error: networkError
                 )
-                let allApprove = await allResponseInterceptorsApprove(context: context)
+                let allApprove = await allRetryInterceptorsApprove(context: context)
                 guard allApprove else {
                     throw networkError
                 }
@@ -296,15 +335,15 @@ public final class NetworkClient: NetRunner, Sendable {
             return false
         }
 
-        guard case .waitUntilConnected(let maxAttempts, let timeout, let retryableMethods) = connectivityRetryPolicy else {
+        guard connectivityRetryPolicy.isEnabled else {
             return false
         }
 
-        guard connectivityRetryAttemptIndex < maxAttempts else {
+        guard connectivityRetryAttemptIndex < connectivityRetryPolicy.maxRetries else {
             return false
         }
 
-        guard Self.isRetryable(request: request, retryableMethods: retryableMethods) else {
+        guard Self.isRetryable(request: request, retryableMethods: connectivityRetryPolicy.retryableMethods) else {
             return false
         }
 
@@ -317,13 +356,13 @@ public final class NetworkClient: NetRunner, Sendable {
             attemptIndex: attemptIndex,
             error: error
         )
-        let allApprove = await allResponseInterceptorsApprove(context: context)
+        let allApprove = await allRetryInterceptorsApprove(context: context)
         guard allApprove else {
             throw error
         }
 
         do {
-            try await connectivityMonitor.waitForConnectivityRestoration(timeout: timeout)
+            try await connectivityMonitor.waitForConnectivityRestoration(timeout: connectivityRetryPolicy.timeout)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -347,7 +386,7 @@ public final class NetworkClient: NetRunner, Sendable {
         guard let httpMethod = request.httpMethod else {
             return nil
         }
-        return HTTPMethod(rawValue: httpMethod.uppercased())
+        return HTTPMethod(rawValue: httpMethod)
     }
 
     private func sleepBeforeRetry(attempt: Int) async throws {
@@ -357,9 +396,9 @@ public final class NetworkClient: NetRunner, Sendable {
         }
     }
 
-    private func allResponseInterceptorsApprove(context: RetryContext) async -> Bool {
-        for interceptor in responseInterceptors {
-            if await !interceptor.shouldRetry(context: context) {
+    private func allRetryInterceptorsApprove(context: RetryContext) async -> Bool {
+        for interceptor in retryInterceptors {
+            if await interceptor.retryDecision(for: context) == .doNotRetry {
                 return false
             }
         }

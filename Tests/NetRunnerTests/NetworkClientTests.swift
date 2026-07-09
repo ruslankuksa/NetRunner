@@ -12,7 +12,10 @@ struct NetworkClientTests {
         session: MockURLSession,
         retryPolicy: RetryPolicy = .none,
         requestInterceptors: [any RequestInterceptor] = [],
-        responseInterceptors: [any ResponseInterceptor] = [],
+        retryInterceptors: [any RetryInterceptor] = [],
+        responseValidator: any ResponseValidator = DefaultResponseValidator(),
+        defaultDecoder: JSONDecoder = JSONDecoder(),
+        defaultEncoder: JSONEncoder = JSONEncoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = MockConnectivityMonitor()
     ) -> NetworkClient {
@@ -20,7 +23,10 @@ struct NetworkClientTests {
             session: session,
             retryPolicy: retryPolicy,
             requestInterceptors: requestInterceptors,
-            responseInterceptors: responseInterceptors,
+            retryInterceptors: retryInterceptors,
+            responseValidator: responseValidator,
+            defaultDecoder: defaultDecoder,
+            defaultEncoder: defaultEncoder,
             connectivityRetryPolicy: connectivityRetryPolicy,
             connectivityMonitor: connectivityMonitor
         )
@@ -82,6 +88,104 @@ struct NetworkClientTests {
         try await client.execute(request: TestNetworkRequest())
 
         #expect(session.callCount == 1)
+    }
+
+    @Test func clientDefaultDecoderIsUsedWhenRequestDoesNotOverride() async throws {
+        struct Payload: Decodable {
+            let createdAt: Date
+        }
+
+        let json = #"{"createdAt":"1970-01-01T00:00:00Z"}"#.data(using: .utf8)!
+        let session = stubbedSession(statusCode: 200, data: json)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let client = makeClient(session: session, defaultDecoder: decoder)
+
+        let payload: Payload = try await client.execute(request: TestNetworkRequest())
+
+        #expect(payload.createdAt.timeIntervalSince1970 == 0)
+    }
+
+    @Test func requestDecoderOverridesClientDefaultDecoder() async throws {
+        struct Payload: Decodable {
+            let createdAt: Date
+        }
+
+        struct ISODateRequest: NetworkRequest {
+            let baseURL = URL(string: "https://example.com")!
+            let method: HTTPMethod = .get
+            let endpoint: any Endpoint = TestEndpoint()
+
+            var decoder: JSONDecoder? {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                return decoder
+            }
+        }
+
+        let json = #"{"createdAt":"1970-01-01T00:00:00Z"}"#.data(using: .utf8)!
+        let session = stubbedSession(statusCode: 200, data: json)
+        let clientDefaultDecoder = JSONDecoder()
+        clientDefaultDecoder.dateDecodingStrategy = .secondsSince1970
+        let client = makeClient(session: session, defaultDecoder: clientDefaultDecoder)
+
+        let payload: Payload = try await client.execute(request: ISODateRequest())
+
+        #expect(payload.createdAt.timeIntervalSince1970 == 0)
+    }
+
+    @Test func clientDefaultEncoderIsUsedWhenRequestDoesNotOverride() async throws {
+        struct Payload: Encodable, Sendable {
+            let createdAt: Date
+        }
+
+        let session = stubbedSession(statusCode: 204)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let client = makeClient(session: session, defaultEncoder: encoder)
+
+        try await client.execute(
+            request: TestNetworkRequestWithBody(httpBody: Payload(createdAt: Date(timeIntervalSince1970: 0)))
+        )
+
+        let body = try #require(session.capturedRequests.first?.httpBody)
+        let bodyText = try #require(String(data: body, encoding: .utf8))
+        #expect(bodyText.contains(#""1970-01-01T00:00:00Z""#))
+    }
+
+    @Test func requestEncoderOverridesClientDefaultEncoder() async throws {
+        struct Payload: Encodable, Sendable {
+            let createdAt: Date
+        }
+
+        struct MillisecondsDateRequest: NetworkRequest {
+            let baseURL = URL(string: "https://example.com")!
+            let method: HTTPMethod = .post
+            let endpoint: any Endpoint = TestEndpoint()
+            let payload = Payload(createdAt: Date(timeIntervalSince1970: 1))
+
+            var httpBody: (any Encodable & Sendable)? {
+                payload
+            }
+
+            var encoder: JSONEncoder? {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .millisecondsSince1970
+                return encoder
+            }
+        }
+
+        let session = stubbedSession(statusCode: 204)
+        let clientDefaultEncoder = JSONEncoder()
+        clientDefaultEncoder.dateEncodingStrategy = .iso8601
+        let client = makeClient(session: session, defaultEncoder: clientDefaultEncoder)
+
+        try await client.execute(request: MillisecondsDateRequest())
+
+        let body = try #require(session.capturedRequests.first?.httpBody)
+        let bodyText = try #require(String(data: body, encoding: .utf8))
+        #expect(bodyText.contains("1000"))
+        #expect(!bodyText.contains("1970-01-01T00:00:01Z"))
     }
 
     // MARK: - Decode failure
@@ -151,12 +255,27 @@ struct NetworkClientTests {
         }
     }
 
+    @Test func injectedResponseValidatorControlsStatusMapping() async {
+        struct RejectingValidator: ResponseValidator {
+            func validate(_ response: URLResponse, data: Data) throws {
+                throw NetworkError.requestFailed("custom validator")
+            }
+        }
+
+        let session = stubbedSession(statusCode: 200)
+        let client = makeClient(session: session, responseValidator: RejectingValidator())
+
+        await #expect(throws: NetworkError.requestFailed("custom validator")) {
+            try await client.execute(request: TestNetworkRequest())
+        }
+    }
+
     // MARK: - Retry — call count
 
     @Test func retry503ExhaustsAttempts() async {
-        // maxAttempts: 3 → 1 initial + 3 retries = 4 total calls
+        // maxRetries: 3 → 1 initial + 3 retries = 4 total calls
         let session = stubbedSession(statusCode: 503)
-        let client = makeClient(session: session, retryPolicy: .exponential(maxAttempts: 3, baseDelay: 0))
+        let client = makeClient(session: session, retryPolicy: .exponential(maxRetries: 3, baseDelay: 0))
 
         await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest())
@@ -167,7 +286,7 @@ struct NetworkClientTests {
     @Test func retry404DoesNotRetry() async {
         // 404 is a client error — isRetryable returns false
         let session = stubbedSession(statusCode: 404)
-        let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 3, delay: 0))
+        let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 3, delay: 0))
 
         await #expect(throws: NetworkError.self) {
             try await client.execute(request: TestNetworkRequest())
@@ -179,7 +298,7 @@ struct NetworkClientTests {
     @Test func retryableTransportFailureRetriesRequests() async {
         let session = MockURLSession()
         session.stubbedError = URLError(.timedOut)
-        let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
+        let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 1, delay: 0))
 
         await #expect(throws: NetworkError.timeout) {
             try await client.execute(request: TestNetworkRequest())
@@ -191,7 +310,7 @@ struct NetworkClientTests {
     @Test func noConnectivityTransportFailureRetriesRequests() async {
         let session = MockURLSession()
         session.stubbedError = URLError(.notConnectedToInternet)
-        let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
+        let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 1, delay: 0))
 
         await #expect(throws: NetworkError.noConnectivity) {
             try await client.execute(request: TestNetworkRequest())
@@ -202,7 +321,7 @@ struct NetworkClientTests {
 
     @Test func retryPolicyDoesNotRetryPostByDefault() async {
         let session = stubbedSession(statusCode: 503)
-        let client = makeClient(session: session, retryPolicy: .fixed(maxAttempts: 1, delay: 0))
+        let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 1, delay: 0))
 
         await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
             try await client.execute(request: TestNetworkRequest(method: .post))
@@ -215,7 +334,7 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 503)
         let client = makeClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post])
+            retryPolicy: .fixed(maxRetries: 1, delay: 0, retryableMethods: [.post])
         )
 
         await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
@@ -231,7 +350,7 @@ struct NetworkClientTests {
         interceptor.methodOverride = "CUSTOM"
         let client = makeClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
+            retryPolicy: .fixed(maxRetries: 1, delay: 0),
             requestInterceptors: [interceptor]
         )
 
@@ -240,6 +359,21 @@ struct NetworkClientTests {
         }
 
         #expect(session.callCount == 1)
+    }
+
+    @Test func retryPolicyRetriesCustomHTTPMethodWhenAllowed() async {
+        let session = stubbedSession(statusCode: 503)
+        let customMethod = HTTPMethod.custom("CUSTOM")
+        let client = makeClient(
+            session: session,
+            retryPolicy: .fixed(maxRetries: 1, delay: 0, retryableMethods: [customMethod])
+        )
+
+        await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
+            try await client.execute(request: TestNetworkRequest(method: customMethod))
+        }
+
+        #expect(session.capturedRequests.map(\.httpMethod) == ["CUSTOM", "CUSTOM"])
     }
 
     @Test func disabledConnectivityRetryDoesNotCreateDefaultMonitor() {
@@ -264,7 +398,7 @@ struct NetworkClientTests {
 
         _ = NetworkClient(
             session: session,
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitorFactory: {
                 factoryCallCount += 1
                 return TestCancellableConnectivityMonitor()
@@ -279,7 +413,7 @@ struct NetworkClientTests {
         let monitor = TestCancellableConnectivityMonitor()
         var client: NetworkClient? = NetworkClient(
             session: session,
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitorFactory: { monitor }
         )
 
@@ -294,7 +428,7 @@ struct NetworkClientTests {
         let monitor = TestCancellableConnectivityMonitor()
         var client: NetworkClient? = NetworkClient(
             session: session,
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitor: monitor,
             connectivityMonitorFactory: {
                 Issue.record("Injected monitor should avoid default factory")
@@ -320,7 +454,7 @@ struct NetworkClientTests {
         let connectivityMonitor = MockConnectivityMonitor()
         let client = makeClient(
             session: session,
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitor: connectivityMonitor
         )
 
@@ -347,7 +481,7 @@ struct NetworkClientTests {
         let connectivityMonitor = MockConnectivityMonitor()
         let client = makeClient(
             session: session,
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitor: connectivityMonitor
         )
 
@@ -372,7 +506,7 @@ struct NetworkClientTests {
         let client = makeClient(
             session: session,
             connectivityRetryPolicy: .waitUntilConnected(
-                maxAttempts: 1,
+                maxRetries: 1,
                 timeout: nil,
                 retryableMethods: [.post]
             ),
@@ -401,8 +535,8 @@ struct NetworkClientTests {
         let connectivityMonitor = MockConnectivityMonitor()
         let client = makeClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 0, timeout: nil),
+            retryPolicy: .fixed(maxRetries: 1, delay: 0),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 0, timeout: nil),
             connectivityMonitor: connectivityMonitor
         )
 
@@ -418,12 +552,12 @@ struct NetworkClientTests {
         let session = MockURLSession()
         session.stubbedError = URLError(.notConnectedToInternet)
         let connectivityMonitor = MockConnectivityMonitor()
-        let responseInterceptor = MockResponseInterceptor()
+        let retryInterceptor = MockRetryInterceptor()
         let client = makeClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
-            responseInterceptors: [responseInterceptor],
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            retryPolicy: .fixed(maxRetries: 1, delay: 0),
+            retryInterceptors: [retryInterceptor],
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitor: connectivityMonitor
         )
 
@@ -439,7 +573,7 @@ struct NetworkClientTests {
         }
         #expect(session.callCount == 3)
         #expect(await connectivityMonitor.waitCallCount == 1)
-        #expect(responseInterceptor.callCount == 2)
+        #expect(retryInterceptor.callCount == 2)
     }
 
     @Test func connectivityRetryTimeoutThrowsNoConnectivity() async {
@@ -448,7 +582,7 @@ struct NetworkClientTests {
         let connectivityMonitor = MockConnectivityMonitor(waitError: NetworkError.noConnectivity)
         let client = makeClient(
             session: session,
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: 0.01),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: 0.01),
             connectivityMonitor: connectivityMonitor
         )
 
@@ -467,7 +601,7 @@ struct NetworkClientTests {
         let connectivityMonitor = MockConnectivityMonitor()
         let client = makeClient(
             session: session,
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitor: connectivityMonitor
         )
 
@@ -484,15 +618,15 @@ struct NetworkClientTests {
         #expect(session.callCount == 1)
     }
 
-    @Test func connectivityRetryVetoedByResponseInterceptorDoesNotWait() async {
+    @Test func connectivityRetryVetoedByRetryInterceptorDoesNotWait() async {
         let session = MockURLSession()
         session.stubbedError = URLError(.notConnectedToInternet)
         let connectivityMonitor = MockConnectivityMonitor()
-        let interceptor = MockResponseInterceptor(shouldRetryResult: false)
+        let interceptor = MockRetryInterceptor(decision: .doNotRetry)
         let client = makeClient(
             session: session,
-            responseInterceptors: [interceptor],
-            connectivityRetryPolicy: .waitUntilConnected(maxAttempts: 1, timeout: nil),
+            retryInterceptors: [interceptor],
+            connectivityRetryPolicy: .waitUntilConnected(maxRetries: 1, timeout: nil),
             connectivityMonitor: connectivityMonitor
         )
 
@@ -605,15 +739,15 @@ struct NetworkClientTests {
         }
     }
 
-    // MARK: - ResponseInterceptor veto
+    // MARK: - RetryInterceptor veto
 
-    @Test func retryVetoedByResponseInterceptorDoesNotRetry() async {
+    @Test func retryVetoedByRetryInterceptorDoesNotRetry() async {
         let session = stubbedSession(statusCode: 503)
-        let interceptor = MockResponseInterceptor(shouldRetryResult: false)
+        let interceptor = MockRetryInterceptor(decision: .doNotRetry)
         let client = makeClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 3, delay: 0),
-            responseInterceptors: [interceptor]
+            retryPolicy: .fixed(maxRetries: 3, delay: 0),
+            retryInterceptors: [interceptor]
         )
 
         await #expect(throws: NetworkError.self) {
@@ -628,12 +762,12 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 503)
         let store = RetryTokenStore(token: "initial")
         let requestInterceptor = TokenHeaderInterceptor(store: store)
-        let responseInterceptor = RefreshTokenRetryInterceptor(store: store)
+        let retryInterceptor = RefreshTokenRetryInterceptor(store: store)
         let client = makeClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0),
+            retryPolicy: .fixed(maxRetries: 1, delay: 0),
             requestInterceptors: [requestInterceptor],
-            responseInterceptors: [responseInterceptor]
+            retryInterceptors: [retryInterceptor]
         )
 
         await #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
@@ -644,7 +778,7 @@ struct NetworkClientTests {
             $0.value(forHTTPHeaderField: "Authorization")
         }
         #expect(requestInterceptor.interceptCallCount == 2)
-        #expect(responseInterceptor.callCount == 1)
+        #expect(retryInterceptor.callCount == 1)
         #expect(authorizationHeaders == ["Bearer initial", "Bearer refreshed"])
     }
 

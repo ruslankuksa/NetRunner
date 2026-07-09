@@ -70,37 +70,37 @@ struct NetworkErrorTests {
         #expect(error.errorDescription != nil, "\(error) should have a non-nil description")
     }
 
-    // MARK: - validate status dispatch (via NetRunner default)
+    // MARK: - validate status dispatch
 
     @Test func validate200DoesNotThrow() throws {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         let response = makeHTTPResponse(statusCode: 200)
-        #expect(throws: Never.self) { try runner.validate(response, data: Data()) }
+        #expect(throws: Never.self) { try validator.validate(response, data: Data()) }
     }
 
     @Test func validate299DoesNotThrow() throws {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         #expect(throws: Never.self) {
-            try runner.validate(makeHTTPResponse(statusCode: 299), data: Data())
+            try validator.validate(makeHTTPResponse(statusCode: 299), data: Data())
         }
     }
 
     @Test func validate401ThrowsUnauthorized() {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         #expect(throws: NetworkError.unauthorized(response: makeTestHTTPErrorResponse(statusCode: 401))) {
-            try runner.validate(makeHTTPResponse(statusCode: 401), data: Data())
+            try validator.validate(makeHTTPResponse(statusCode: 401), data: Data())
         }
     }
 
     @Test func validate404ThrowsClientError() {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         #expect(throws: NetworkError.clientError(response: makeTestHTTPErrorResponse(statusCode: 404))) {
-            try runner.validate(makeHTTPResponse(statusCode: 404), data: Data())
+            try validator.validate(makeHTTPResponse(statusCode: 404), data: Data())
         }
     }
 
     @Test func validate422ThrowsClientErrorWithBodyAndHeaders() {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         let body = Data(#"{"success":false,"message":["Already connected"]}"#.utf8)
         let response = makeHTTPResponse(
             statusCode: 422,
@@ -108,7 +108,7 @@ struct NetworkErrorTests {
         )
 
         do {
-            try runner.validate(response, data: body)
+            try validator.validate(response, data: body)
             Issue.record("Expected validation to throw a client error")
         } catch NetworkError.clientError(let errorResponse) {
             #expect(errorResponse.statusCode == 422)
@@ -121,14 +121,14 @@ struct NetworkErrorTests {
     }
 
     @Test func validate503ThrowsServerError() {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         #expect(throws: NetworkError.serverError(response: makeTestHTTPErrorResponse(statusCode: 503))) {
-            try runner.validate(makeHTTPResponse(statusCode: 503), data: Data())
+            try validator.validate(makeHTTPResponse(statusCode: 503), data: Data())
         }
     }
 
     @Test func validate300ThrowsUnexpectedStatusCodeWithBodyAndHeaders() {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         let body = Data("use cached response".utf8)
         let response = makeHTTPResponse(
             statusCode: 300,
@@ -136,7 +136,7 @@ struct NetworkErrorTests {
         )
 
         do {
-            try runner.validate(response, data: body)
+            try validator.validate(response, data: body)
             Issue.record("Expected validation to throw an unexpected status code error")
         } catch NetworkError.unexpectedStatusCode(let errorResponse) {
             #expect(errorResponse.statusCode == 300)
@@ -149,10 +149,10 @@ struct NetworkErrorTests {
     }
 
     @Test func validateNonHTTPThrowsInvalidResponse() {
-        let runner = TestRunner()
+        let validator = DefaultResponseValidator()
         let response = URLResponse(url: URL(string: "https://example.com")!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
         #expect(throws: NetworkError.invalidResponse) {
-            try runner.validate(response, data: Data())
+            try validator.validate(response, data: Data())
         }
     }
 
@@ -169,10 +169,4 @@ struct NetworkErrorTests {
             headerFields: headerFields
         )!
     }
-}
-
-// Minimal conformer so we can call the default validate
-private struct TestRunner: NetRunner {
-    func execute<T: Decodable>(request: any NetworkRequest) async throws -> T { fatalError() }
-    func execute(request: any NetworkRequest) async throws { fatalError() }
 }

@@ -10,54 +10,6 @@ import Foundation
 @Suite(.serialized)
 struct UploadTests {
 
-    // MARK: - NetRunner default uploads
-
-    @Test func netRunnerDefaultDecodedUploadIsAvailableForCustomConformer() async throws {
-        struct Payload: Decodable { let id: Int }
-        struct APIClient: NetRunner {}
-
-        URLProtocol.registerClass(NetRunnerUploadURLProtocol.self)
-        defer { URLProtocol.unregisterClass(NetRunnerUploadURLProtocol.self) }
-
-        let client = APIClient()
-        let request = TestUploadRequest(
-            baseURL: URL(string: "https://netrunner-upload.test")!,
-            method: .post,
-            endpoint: TestEndpoint("/decoded"),
-            uploadBody: .data(data: Data("payload".utf8), contentType: "text/plain")
-        )
-
-        let events = try await collect(client.upload(request: request, responseType: Payload.self))
-
-        guard case .response(let payload) = events.last else {
-            Issue.record("Expected final event to be decoded response")
-            return
-        }
-        #expect(payload.id == 42)
-    }
-
-    @Test func netRunnerDefaultVoidUploadIsAvailableForCustomConformer() async throws {
-        struct APIClient: NetRunner {}
-
-        URLProtocol.registerClass(NetRunnerUploadURLProtocol.self)
-        defer { URLProtocol.unregisterClass(NetRunnerUploadURLProtocol.self) }
-
-        let client = APIClient()
-        let request = TestUploadRequest(
-            baseURL: URL(string: "https://netrunner-upload.test")!,
-            method: .post,
-            endpoint: TestEndpoint("/void"),
-            uploadBody: .data(data: Data("payload".utf8), contentType: nil)
-        )
-
-        let events = try await collect(client.upload(request: request))
-
-        guard case .response = events.last else {
-            Issue.record("Expected final event to be Void response")
-            return
-        }
-    }
-
     // MARK: - Data uploads
 
     @Test func dataUploadWritesBytesToTemporaryFileAndDecodesResponse() async throws {
@@ -421,6 +373,34 @@ struct UploadTests {
         #expect(multipartBody.contains("Content-Disposition: form-data; name=\"message\"\r\n\r\nfirst line\r\nsecond line\r\n"))
     }
 
+    @Test func multipartUploadFinalizesContentHeadersAfterRequestInterceptors() async throws {
+        let session = MockURLSession()
+        session.stub(statusCode: 204)
+        let contentTypeInterceptor = MockRequestInterceptor()
+        contentTypeInterceptor.headerToAdd = (name: "Content-Type", value: "text/plain")
+        let contentLengthInterceptor = MockRequestInterceptor()
+        contentLengthInterceptor.headerToAdd = (name: "Content-Length", value: "0")
+        let client = NetworkClient(
+            session: session,
+            requestInterceptors: [contentTypeInterceptor, contentLengthInterceptor]
+        )
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .multipart(
+                fields: ["title": "Avatar"],
+                files: [],
+                boundary: "Boundary-Test"
+            )
+        )
+
+        _ = try await collect(client.upload(request: request))
+
+        let capturedRequest = try #require(session.capturedRequests.first)
+        let multipartData = try #require(session.capturedUploadFileData.first)
+        #expect(capturedRequest.value(forHTTPHeaderField: "Content-Type") == "multipart/form-data; boundary=Boundary-Test")
+        #expect(capturedRequest.value(forHTTPHeaderField: "Content-Length") == String(multipartData.count))
+    }
+
     // MARK: - Validation, interceptors, and retry
 
     @Test func getUploadThrowsUploadBodyNotAllowedForGET() async throws {
@@ -470,7 +450,7 @@ struct UploadTests {
         session.uploadProgressEvents = [(3, 9)]
         let client = NetworkClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post])
+            retryPolicy: .fixed(maxRetries: 1, delay: 0, retryableMethods: [.post])
         )
         let request = TestUploadRequest(
             method: .post,
@@ -498,7 +478,7 @@ struct UploadTests {
         session.stubbedError = URLError(.timedOut)
         let client = NetworkClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post])
+            retryPolicy: .fixed(maxRetries: 1, delay: 0, retryableMethods: [.post])
         )
         let request = TestUploadRequest(
             method: .post,
@@ -520,12 +500,12 @@ struct UploadTests {
         session.stub(statusCode: 503)
         let store = RetryTokenStore(token: "initial")
         let requestInterceptor = TokenHeaderInterceptor(store: store)
-        let responseInterceptor = RefreshTokenRetryInterceptor(store: store)
+        let retryInterceptor = RefreshTokenRetryInterceptor(store: store)
         let client = NetworkClient(
             session: session,
-            retryPolicy: .fixed(maxAttempts: 1, delay: 0, retryableMethods: [.post]),
+            retryPolicy: .fixed(maxRetries: 1, delay: 0, retryableMethods: [.post]),
             requestInterceptors: [requestInterceptor],
-            responseInterceptors: [responseInterceptor]
+            retryInterceptors: [retryInterceptor]
         )
         let request = TestUploadRequest(
             method: .post,
@@ -540,7 +520,7 @@ struct UploadTests {
             $0.value(forHTTPHeaderField: "Authorization")
         }
         #expect(requestInterceptor.interceptCallCount == 2)
-        #expect(responseInterceptor.callCount == 1)
+        #expect(retryInterceptor.callCount == 1)
         #expect(authorizationHeaders == ["Bearer initial", "Bearer refreshed"])
     }
 
@@ -559,7 +539,7 @@ struct UploadTests {
         let client = NetworkClient(
             session: session,
             connectivityRetryPolicy: .waitUntilConnected(
-                maxAttempts: 1,
+                maxRetries: 1,
                 timeout: nil,
                 retryableMethods: [.post]
             ),
@@ -650,43 +630,4 @@ struct UploadTests {
                 .filter { $0.hasPrefix("NetRunner-") && $0.hasSuffix(".upload") }
         )
     }
-}
-
-private final class NetRunnerUploadURLProtocol: URLProtocol {
-    override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.host == "netrunner-upload.test"
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
-        request
-    }
-
-    override func startLoading() {
-        guard let url = request.url else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
-            return
-        }
-
-        let data: Data
-        switch url.path {
-        case "/decoded":
-            data = #"{"id":42}"#.data(using: .utf8)!
-        default:
-            data = Data()
-        }
-
-        let response = HTTPURLResponse(
-            url: url,
-            statusCode: 200,
-            httpVersion: nil,
-            headerFields: nil
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        if !data.isEmpty {
-            client?.urlProtocol(self, didLoad: data)
-        }
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
 }

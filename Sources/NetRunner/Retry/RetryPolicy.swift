@@ -1,40 +1,69 @@
-
 import Foundation
 
-/// Defines the retry behavior for failed network requests.
-public enum RetryPolicy: Sendable {
-    /// No retries.
-    case none
-    /// Retries allowed HTTP methods up to `maxAttempts` times with a constant delay between attempts.
-    case fixed(
-        maxAttempts: Int,
-        delay: TimeInterval,
-        retryableMethods: Set<HTTPMethod> = HTTPMethod.defaultRetryableMethods
-    )
-    /// Retries allowed HTTP methods up to `maxAttempts` times with exponentially increasing delays.
-    case exponential(
-        maxAttempts: Int,
-        baseDelay: TimeInterval,
-        retryableMethods: Set<HTTPMethod> = HTTPMethod.defaultRetryableMethods
-    )
+/// Defines retry behavior for failed network requests.
+public struct RetryPolicy: Sendable {
+    enum Storage: Sendable {
+        case none
+        case fixed(maxRetries: Int, delay: TimeInterval, retryableMethods: Set<HTTPMethod>)
+        case exponential(maxRetries: Int, baseDelay: TimeInterval, retryableMethods: Set<HTTPMethod>)
+    }
+
+    let storage: Storage
+
+    private init(storage: Storage) {
+        self.storage = storage
+    }
 }
 
 public extension RetryPolicy {
+    /// No retries.
+    static let none = RetryPolicy(storage: .none)
 
-    var maxAttempts: Int {
-        switch self {
+    /// Retries allowed HTTP methods up to `maxRetries` times with a constant delay between attempts.
+    static func fixed(
+        maxRetries: Int,
+        delay: TimeInterval,
+        retryableMethods: Set<HTTPMethod> = HTTPMethod.defaultRetryableMethods
+    ) -> RetryPolicy {
+        RetryPolicy(
+            storage: .fixed(
+                maxRetries: normalizedRetryCount(maxRetries),
+                delay: normalizedDelay(delay),
+                retryableMethods: retryableMethods
+            )
+        )
+    }
+
+    /// Retries allowed HTTP methods up to `maxRetries` times with exponentially increasing delays.
+    static func exponential(
+        maxRetries: Int,
+        baseDelay: TimeInterval,
+        retryableMethods: Set<HTTPMethod> = HTTPMethod.defaultRetryableMethods
+    ) -> RetryPolicy {
+        RetryPolicy(
+            storage: .exponential(
+                maxRetries: normalizedRetryCount(maxRetries),
+                baseDelay: normalizedDelay(baseDelay),
+                retryableMethods: retryableMethods
+            )
+        )
+    }
+
+    /// Number of retries after the initial request attempt.
+    var maxRetries: Int {
+        switch storage {
         case .none:
             return 0
-        case .fixed(let maxAttempts, _, _):
-            return maxAttempts
-        case .exponential(let maxAttempts, _, _):
-            return maxAttempts
+        case .fixed(let maxRetries, _, _):
+            return maxRetries
+        case .exponential(let maxRetries, _, _):
+            return maxRetries
         }
     }
 
     /// HTTP methods eligible for automatic retries.
     var retryableMethods: Set<HTTPMethod> {
-        switch self {
+        switch storage {
         case .none:
             return []
         case .fixed(_, _, let retryableMethods):
@@ -46,7 +75,7 @@ public extension RetryPolicy {
 
     /// Returns the delay in seconds for the given attempt index (0-based).
     func delay(forAttempt attempt: Int) -> TimeInterval {
-        switch self {
+        switch storage {
         case .none:
             return 0
         case .fixed(_, let delay, _):
@@ -73,5 +102,36 @@ public extension RetryPolicy {
             return false
         }
         return isRetryable(error: error) && retryableMethods.contains(method)
+    }
+
+    @available(*, deprecated, renamed: "fixed(maxRetries:delay:retryableMethods:)")
+    static func fixed(
+        maxAttempts: Int,
+        delay: TimeInterval,
+        retryableMethods: Set<HTTPMethod> = HTTPMethod.defaultRetryableMethods
+    ) -> RetryPolicy {
+        fixed(maxRetries: maxAttempts, delay: delay, retryableMethods: retryableMethods)
+    }
+
+    @available(*, deprecated, renamed: "exponential(maxRetries:baseDelay:retryableMethods:)")
+    static func exponential(
+        maxAttempts: Int,
+        baseDelay: TimeInterval,
+        retryableMethods: Set<HTTPMethod> = HTTPMethod.defaultRetryableMethods
+    ) -> RetryPolicy {
+        exponential(maxRetries: maxAttempts, baseDelay: baseDelay, retryableMethods: retryableMethods)
+    }
+
+    @available(*, deprecated, renamed: "maxRetries")
+    var maxAttempts: Int {
+        maxRetries
+    }
+
+    private static func normalizedRetryCount(_ value: Int) -> Int {
+        max(0, value)
+    }
+
+    private static func normalizedDelay(_ value: TimeInterval) -> TimeInterval {
+        value.isFinite ? max(0, value) : 0
     }
 }

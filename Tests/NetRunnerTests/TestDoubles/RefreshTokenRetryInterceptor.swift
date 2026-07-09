@@ -1,6 +1,6 @@
 @testable import NetRunner
 
-final class RefreshTokenRetryInterceptor: ResponseInterceptor, @unchecked Sendable {
+final class RefreshTokenRetryInterceptor: RetryInterceptor, @unchecked Sendable {
     private let store: RetryTokenStore
     var callCount = 0
 
@@ -8,9 +8,9 @@ final class RefreshTokenRetryInterceptor: ResponseInterceptor, @unchecked Sendab
         self.store = store
     }
 
-    func shouldRetry(context: RetryContext) async -> Bool {
+    func retryDecision(for context: RetryContext) async -> RetryDecision {
         callCount += 1
         store.token = "refreshed"
-        return true
+        return .retry
     }
 }

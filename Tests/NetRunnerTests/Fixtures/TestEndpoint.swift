@@ -1,9 +1,9 @@
 @testable import NetRunner
 
 struct TestEndpoint: Endpoint {
-    var path: String
+    var path: RequestPath
 
     init(_ path: String = "/test") {
-        self.path = path
+        self.path = RequestPath(path)
     }
 }

@@ -5,7 +5,7 @@ import Foundation
 ///
 /// Values must be `Sendable` so requests can cross task boundaries
 /// under Swift concurrency checking.
-public typealias QueryParameters = [String: any Sendable]
+public typealias QueryParameters = [String: QueryValue]
 
 /// HTTP header fields keyed by header name.
 public typealias HTTPHeaders = [String: String]
@@ -20,24 +20,32 @@ public protocol NetworkRequest: Sendable {
     var parameters: QueryParameters? { get }
     var httpBody: (any Encodable & Sendable)? { get }
 
-    var decoder: JSONDecoder { get }
-    var encoder: JSONEncoder { get }
+    var decoder: JSONDecoder? { get }
+    var encoder: JSONEncoder? { get }
     var arrayEncoding: ArrayEncoding { get }
     var cachePolicy: URLRequest.CachePolicy { get }
 }
 
 public extension NetworkRequest {
 
+    var headers: HTTPHeaders? {
+        nil
+    }
+
+    var parameters: QueryParameters? {
+        nil
+    }
+
     var httpBody: (any Encodable & Sendable)? {
         nil
     }
 
-    var decoder: JSONDecoder {
-        return .init()
+    var decoder: JSONDecoder? {
+        nil
     }
 
-    var encoder: JSONEncoder {
-        return .init()
+    var encoder: JSONEncoder? {
+        nil
     }
 
     var arrayEncoding: ArrayEncoding {
@@ -63,7 +71,7 @@ public extension NetworkRequest {
             guard method != .get else {
                 throw NetworkError.httpBodyNotAllowedForGET
             }
-            request.httpBody = try encoder.encode(httpBody)
+            request.httpBody = try (encoder ?? JSONEncoder()).encode(httpBody)
         }
         return request
     }

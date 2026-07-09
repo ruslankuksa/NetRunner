@@ -5,6 +5,15 @@ internal struct PreparedUpload: Sendable {
     let request: URLRequest
     let fileURL: URL
     let temporaryFileURL: URL?
+    let contentType: String
+    let contentLength: String?
+
+    func finalize(_ request: inout URLRequest) {
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        if let contentLength {
+            request.setValue(contentLength, forHTTPHeaderField: "Content-Length")
+        }
+    }
 }
 
 internal enum UploadRequestPreparer {
@@ -13,18 +22,26 @@ internal enum UploadRequestPreparer {
             throw NetworkError.uploadBodyNotAllowedForGET
         }
 
-        var urlRequest = try uploadRequest.makeURLRequest()
+        let urlRequest = try uploadRequest.makeURLRequest()
         switch uploadRequest.uploadBody {
         case .data(data: let data, contentType: let contentType):
             let temporaryFileURL = try writeUploadData(data)
-            setContentType(contentType ?? "application/octet-stream", on: &urlRequest, override: false)
-            setContentLength(forFileAt: temporaryFileURL, on: &urlRequest)
-            return PreparedUpload(request: urlRequest, fileURL: temporaryFileURL, temporaryFileURL: temporaryFileURL)
+            return PreparedUpload(
+                request: urlRequest,
+                fileURL: temporaryFileURL,
+                temporaryFileURL: temporaryFileURL,
+                contentType: contentType ?? "application/octet-stream",
+                contentLength: contentLength(forFileAt: temporaryFileURL)
+            )
 
         case .rawFile(let fileURL, let contentType):
-            setContentType(contentType ?? "application/octet-stream", on: &urlRequest, override: false)
-            setContentLength(forFileAt: fileURL, on: &urlRequest)
-            return PreparedUpload(request: urlRequest, fileURL: fileURL, temporaryFileURL: nil)
+            return PreparedUpload(
+                request: urlRequest,
+                fileURL: fileURL,
+                temporaryFileURL: nil,
+                contentType: contentType ?? "application/octet-stream",
+                contentLength: contentLength(forFileAt: fileURL)
+            )
 
         case .multipart(let fields, let files, let boundary):
             let boundary = boundary ?? "Boundary-\(UUID().uuidString)"
@@ -33,10 +50,13 @@ internal enum UploadRequestPreparer {
                 files: files,
                 boundary: boundary
             )
-            // NetRunner owns the multipart Content-Type because the boundary is part of correctness.
-            setContentType("multipart/form-data; boundary=\(boundary)", on: &urlRequest, override: true)
-            setContentLength(forFileAt: temporaryFileURL, on: &urlRequest)
-            return PreparedUpload(request: urlRequest, fileURL: temporaryFileURL, temporaryFileURL: temporaryFileURL)
+            return PreparedUpload(
+                request: urlRequest,
+                fileURL: temporaryFileURL,
+                temporaryFileURL: temporaryFileURL,
+                contentType: "multipart/form-data; boundary=\(boundary)",
+                contentLength: contentLength(forFileAt: temporaryFileURL)
+            )
         }
     }
 
@@ -79,19 +99,13 @@ internal enum UploadRequestPreparer {
         return temporaryFileURL
     }
 
-    private static func setContentType(_ contentType: String, on request: inout URLRequest, override: Bool) {
-        if override || request.value(forHTTPHeaderField: "Content-Type") == nil {
-            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        }
-    }
-
-    private static func setContentLength(forFileAt fileURL: URL, on request: inout URLRequest) {
+    private static func contentLength(forFileAt fileURL: URL) -> String? {
         guard
             let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
             let fileSize = (attributes[.size] as? NSNumber)?.int64Value
         else {
-            return
+            return nil
         }
-        request.setValue(String(fileSize), forHTTPHeaderField: "Content-Length")
+        return String(fileSize)
     }
 }
