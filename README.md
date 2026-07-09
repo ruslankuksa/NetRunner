@@ -99,6 +99,10 @@ payloads can be captured by `@Sendable` retry or recovery closures under Swift
 concurrency checking. If you are migrating code that used `httpBody`, move JSON
 payloads to `body: RequestBody? { .json(payload) }`.
 
+Use `RequestBody.encoded(payload)` when a request should inherit the client's
+default request body encoder. Use `RequestBody.json(payload)` when that request
+must be JSON regardless of the client default.
+
 ### 3. Create a client and execute
 
 ```swift
@@ -157,8 +161,8 @@ public final class NetworkClient: NetRunner, Sendable {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
-        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
+        defaultRequestEncoder: any RequestBodyEncoder = JSONRequestBodyEncoder(),
+        defaultResponseDecoder: any ResponseBodyDecoder = JSONResponseBodyDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil
     )
@@ -167,7 +171,7 @@ public final class NetworkClient: NetRunner, Sendable {
 
 `NetworkClient` is the first-class execution path for requests and uploads. Use
 it when you need injected sessions, retry policies, interceptors, uploads,
-connectivity retry, custom validation, or JSON coder configuration.
+connectivity retry, custom validation, or body coding configuration.
 
 ### Retry
 
@@ -283,10 +287,10 @@ let client = NetworkClient(
 
 Multiple interceptors are applied left-to-right before each attempt, including retry attempts. This lets interceptors read refreshed credentials or regenerate per-attempt signatures.
 
-### JSON coding
+### Body and response coding
 
-Configure JSON coding at the client level when most requests share the same
-encoding and decoding rules:
+Configure body and response coding at the client level when most requests share
+the same rules. JSON remains the default through adapter types:
 
 ```swift
 let decoder = JSONDecoder()
@@ -296,12 +300,22 @@ let encoder = JSONEncoder()
 encoder.dateEncodingStrategy = .iso8601
 
 let client = NetworkClient(
-    defaultRequestEncoder: encoder,
-    defaultResponseDecoder: decoder
+    defaultRequestEncoder: JSONRequestBodyEncoder(encoder: encoder),
+    defaultResponseDecoder: JSONResponseBodyDecoder(decoder: decoder)
 )
 ```
 
-Individual request bodies can override the request encoder:
+`RequestBody.encoded` uses the client default unless the body provides its own
+encoder:
+
+```swift
+var body: RequestBody? {
+    .encoded(payload)
+}
+```
+
+`RequestBody.json` always uses JSON and can take an endpoint-specific
+`JSONEncoder`:
 
 ```swift
 var body: RequestBody? {
@@ -313,9 +327,15 @@ Individual requests can override response decoding through `RequestOptions`:
 
 ```swift
 var options: RequestOptions {
-    RequestOptions(responseDecoder: endpointSpecificDecoder)
+    RequestOptions(
+        responseDecoder: JSONResponseBodyDecoder(decoder: endpointSpecificDecoder)
+    )
 }
 ```
+
+For non-JSON formats, conform to `RequestBodyEncoder` or
+`ResponseBodyDecoder` and pass the custom coder at the client, body, or request
+options level.
 
 ### Response validation
 

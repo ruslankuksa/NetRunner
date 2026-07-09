@@ -22,11 +22,11 @@ released under a new major version.
 - Replaced retry policy enum cases with validated factories using
   `maxRetries`.
 - Opened `HTTPMethod` to custom methods.
-- Added default `headers` and `parameters` request implementations and
-  client-level request encoder and response decoder defaults.
-- Added `RequestBody` and `RequestOptions` so outbound body encoding,
-  per-request response decoding, array encoding, and cache policy are grouped
-  by responsibility.
+- Added default `headers` and `parameters` request implementations plus
+  client-level request body encoder and response body decoder defaults.
+- Added protocol-based `RequestBodyEncoder` and `ResponseBodyDecoder` adapters,
+  with JSON defaults and per-request overrides through `RequestBody` and
+  `RequestOptions`.
 
 ## 3.5.0
 

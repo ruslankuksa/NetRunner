@@ -55,7 +55,7 @@ public extension NetworkRequest {
             try body.apply(
                 to: &request,
                 method: method,
-                defaultRequestEncoder: JSONEncoder()
+                defaultRequestEncoder: JSONRequestBodyEncoder()
             )
         }
         return request

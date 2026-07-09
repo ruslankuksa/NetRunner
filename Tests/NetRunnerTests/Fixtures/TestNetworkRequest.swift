@@ -40,10 +40,10 @@ struct TestNetworkRequestWithBody<Body: Encodable & Sendable>: NetworkRequest {
     var parameters: QueryParameters?
     var options: RequestOptions
     private var payload: Body?
-    private var requestBodyEncoder: JSONEncoder?
+    private var requestBodyEncoder: (any RequestBodyEncoder)?
 
     var body: RequestBody? {
-        payload.map { .json($0, encoder: requestBodyEncoder) }
+        payload.map { .encoded($0, encoder: requestBodyEncoder) }
     }
 
     init(
@@ -53,7 +53,7 @@ struct TestNetworkRequestWithBody<Body: Encodable & Sendable>: NetworkRequest {
         headers: HTTPHeaders? = nil,
         parameters: QueryParameters? = nil,
         body: Body? = nil,
-        bodyEncoder: JSONEncoder? = nil,
+        bodyEncoder: (any RequestBodyEncoder)? = nil,
         options: RequestOptions? = nil,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         arrayEncoding: ArrayEncoding = .brackets

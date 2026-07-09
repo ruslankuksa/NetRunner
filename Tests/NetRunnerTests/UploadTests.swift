@@ -10,6 +10,11 @@ import Foundation
 @Suite(.serialized)
 struct UploadTests {
 
+    private enum UploadTestCodingError: Error, Sendable {
+        case failed
+        case unsupportedType
+    }
+
     // MARK: - Data uploads
 
     @Test func dataUploadWritesBytesToTemporaryFileAndDecodesResponse() async throws {
@@ -52,6 +57,100 @@ struct UploadTests {
             return
         }
         #expect(payload.id == 12)
+    }
+
+    @Test func dataUploadUsesClientDefaultResponseDecoder() async throws {
+        struct Payload: Decodable, Sendable, Equatable {
+            let value: String
+        }
+
+        struct PipeResponseBodyDecoder: ResponseBodyDecoder {
+            func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+                guard
+                    type == Payload.self,
+                    let text = String(data: data, encoding: .utf8),
+                    let separatorIndex = text.firstIndex(of: "|")
+                else {
+                    throw UploadTestCodingError.unsupportedType
+                }
+
+                let payload = Payload(value: String(text[text.index(after: separatorIndex)...]))
+                guard let typedPayload = payload as? T else {
+                    throw UploadTestCodingError.unsupportedType
+                }
+                return typedPayload
+            }
+        }
+
+        let session = MockURLSession()
+        session.stub(statusCode: 200)
+        session.stubbedData = Data("upload|decoded".utf8)
+        let client = NetworkClient(
+            session: session,
+            defaultResponseDecoder: PipeResponseBodyDecoder()
+        )
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .data(data: Data("hello".utf8), contentType: "text/plain")
+        )
+
+        let events = try await collect(client.upload(request: request, responseType: Payload.self))
+
+        guard case .response(let payload) = events.last else {
+            Issue.record("Expected final event to be decoded response")
+            return
+        }
+        #expect(payload == Payload(value: "decoded"))
+    }
+
+    @Test func dataUploadRequestResponseDecoderOverridesClientDefault() async throws {
+        struct Payload: Decodable, Sendable, Equatable {
+            let value: String
+        }
+
+        struct FailingResponseBodyDecoder: ResponseBodyDecoder {
+            func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+                throw UploadTestCodingError.failed
+            }
+        }
+
+        struct OverrideResponseBodyDecoder: ResponseBodyDecoder {
+            func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+                guard
+                    type == Payload.self,
+                    let text = String(data: data, encoding: .utf8)
+                else {
+                    throw UploadTestCodingError.unsupportedType
+                }
+
+                let payload = Payload(value: text)
+                guard let typedPayload = payload as? T else {
+                    throw UploadTestCodingError.unsupportedType
+                }
+                return typedPayload
+            }
+        }
+
+        let session = MockURLSession()
+        session.stub(statusCode: 200)
+        session.stubbedData = Data("override-decoder".utf8)
+        let client = NetworkClient(
+            session: session,
+            defaultResponseDecoder: FailingResponseBodyDecoder()
+        )
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .data(data: Data("hello".utf8), contentType: "text/plain"),
+            options: RequestOptions(responseDecoder: OverrideResponseBodyDecoder())
+        )
+
+        let events = try await collect(client.upload(request: request, responseType: Payload.self))
+
+        guard case .response(let payload) = events.last else {
+            Issue.record("Expected final event to be decoded response")
+            return
+        }
+        #expect(payload == Payload(value: "override-decoder"))
     }
 
     @Test func dataUploadDefaultsToOctetStreamContentType() async throws {

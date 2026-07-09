@@ -33,8 +33,8 @@ public final class NetworkClient: NetRunner, Sendable {
     private let requestInterceptors: [any RequestInterceptor]
     private let retryInterceptors: [any RetryInterceptor]
     private let responseValidator: any ResponseValidator
-    private let defaultRequestEncoder: JSONEncoder
-    private let defaultResponseDecoder: JSONDecoder
+    private let defaultRequestEncoder: any RequestBodyEncoder
+    private let defaultResponseDecoder: any ResponseBodyDecoder
     private let connectivityRetryPolicy: ConnectivityRetryPolicy
     private let connectivityMonitorStorage: ConnectivityMonitorStorage
 
@@ -50,7 +50,7 @@ public final class NetworkClient: NetRunner, Sendable {
     ///   - requestInterceptors: Interceptors applied before each request attempt.
     ///   - retryInterceptors: Interceptors that decide whether retry attempts may proceed.
     ///   - responseValidator: The validator used to map URL responses to success or thrown errors.
-    ///   - defaultRequestEncoder: The encoder used when a JSON request body does not provide its own encoder.
+    ///   - defaultRequestEncoder: The encoder used when an encoded request body does not provide its own encoder.
     ///   - defaultResponseDecoder: The decoder used when a request does not provide its own response decoder.
     ///   - connectivityRetryPolicy: The retry policy for no-connectivity failures.
     ///   - connectivityMonitor: The monitor used to wait for connectivity restoration. When
@@ -61,8 +61,8 @@ public final class NetworkClient: NetRunner, Sendable {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
-        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
+        defaultRequestEncoder: any RequestBodyEncoder = JSONRequestBodyEncoder(),
+        defaultResponseDecoder: any ResponseBodyDecoder = JSONResponseBodyDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil
     ) {
@@ -86,8 +86,8 @@ public final class NetworkClient: NetRunner, Sendable {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
-        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
+        defaultRequestEncoder: any RequestBodyEncoder = JSONRequestBodyEncoder(),
+        defaultResponseDecoder: any ResponseBodyDecoder = JSONResponseBodyDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil,
         connectivityMonitorFactory: () -> any CancellableConnectivityMonitor
@@ -409,7 +409,10 @@ public final class NetworkClient: NetRunner, Sendable {
         return true
     }
 
-    private static func decodeData<T: Decodable>(_ data: Data, decoder: JSONDecoder) throws -> T {
+    private static func decodeData<T: Decodable>(
+        _ data: Data,
+        decoder: any ResponseBodyDecoder
+    ) throws -> T {
         do {
             return try decoder.decode(T.self, from: data)
         } catch {

@@ -14,8 +14,8 @@ struct NetworkClientTests {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
-        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
+        defaultRequestEncoder: any RequestBodyEncoder = JSONRequestBodyEncoder(),
+        defaultResponseDecoder: any ResponseBodyDecoder = JSONResponseBodyDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = MockConnectivityMonitor()
     ) -> NetworkClient {
@@ -37,6 +37,31 @@ struct NetworkClientTests {
         session.stub(statusCode: statusCode)
         session.stubbedData = data
         return session
+    }
+
+    private struct FixedRequestBodyEncoder: RequestBodyEncoder {
+        let data: Data
+        let contentType: String?
+
+        init(text: String, contentType: String? = nil) {
+            self.data = Data(text.utf8)
+            self.contentType = contentType
+        }
+
+        func encode(_ value: any Encodable & Sendable) throws -> Data {
+            data
+        }
+    }
+
+    private enum TestCodingError: Error, Sendable {
+        case failed
+        case unsupportedType
+    }
+
+    private struct FailingResponseBodyDecoder: ResponseBodyDecoder {
+        func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+            throw TestCodingError.failed
+        }
     }
 
     private enum ConnectivityStateTestError: Error {
@@ -99,7 +124,10 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 200, data: json)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let client = makeClient(session: session, defaultResponseDecoder: decoder)
+        let client = makeClient(
+            session: session,
+            defaultResponseDecoder: JSONResponseBodyDecoder(decoder: decoder)
+        )
 
         let payload: Payload = try await client.execute(request: TestNetworkRequest())
 
@@ -119,7 +147,7 @@ struct NetworkClientTests {
             var options: RequestOptions {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
-                return RequestOptions(responseDecoder: decoder)
+                return RequestOptions(responseDecoder: JSONResponseBodyDecoder(decoder: decoder))
             }
         }
 
@@ -129,12 +157,43 @@ struct NetworkClientTests {
         clientDefaultResponseDecoder.dateDecodingStrategy = .secondsSince1970
         let client = makeClient(
             session: session,
-            defaultResponseDecoder: clientDefaultResponseDecoder
+            defaultResponseDecoder: JSONResponseBodyDecoder(decoder: clientDefaultResponseDecoder)
         )
 
         let payload: Payload = try await client.execute(request: ISODateRequest())
 
         #expect(payload.createdAt.timeIntervalSince1970 == 0)
+    }
+
+    @Test func customResponseDecoderDecodesNonJSONResponse() async throws {
+        struct Payload: Decodable, Equatable {
+            let value: String
+        }
+
+        struct PipeResponseBodyDecoder: ResponseBodyDecoder {
+            func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+                guard
+                    type == Payload.self,
+                    let text = String(data: data, encoding: .utf8),
+                    let separatorIndex = text.firstIndex(of: "|")
+                else {
+                    throw TestCodingError.unsupportedType
+                }
+
+                let payload = Payload(value: String(text[text.index(after: separatorIndex)...]))
+                guard let typedPayload = payload as? T else {
+                    throw TestCodingError.unsupportedType
+                }
+                return typedPayload
+            }
+        }
+
+        let session = stubbedSession(statusCode: 200, data: Data("payload|custom".utf8))
+        let client = makeClient(session: session, defaultResponseDecoder: PipeResponseBodyDecoder())
+
+        let payload: Payload = try await client.execute(request: TestNetworkRequest())
+
+        #expect(payload == Payload(value: "custom"))
     }
 
     @Test func clientDefaultRequestEncoderIsUsedWhenBodyDoesNotOverride() async throws {
@@ -145,7 +204,10 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 204)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let client = makeClient(session: session, defaultRequestEncoder: encoder)
+        let client = makeClient(
+            session: session,
+            defaultRequestEncoder: JSONRequestBodyEncoder(encoder: encoder)
+        )
 
         try await client.execute(
             request: TestNetworkRequestWithBody(body: Payload(createdAt: Date(timeIntervalSince1970: 0)))
@@ -154,6 +216,29 @@ struct NetworkClientTests {
         let body = try #require(session.capturedRequests.first?.httpBody)
         let bodyText = try #require(String(data: body, encoding: .utf8))
         #expect(bodyText.contains(#""1970-01-01T00:00:00Z""#))
+    }
+
+    @Test func encodedBodyUsesCustomClientDefaultRequestEncoder() async throws {
+        struct Payload: Encodable, Sendable {
+            let value: Int
+        }
+
+        let session = stubbedSession(statusCode: 204)
+        let client = makeClient(
+            session: session,
+            defaultRequestEncoder: FixedRequestBodyEncoder(
+                text: "encoded-wire-body",
+                contentType: "application/x-netrunner-test"
+            )
+        )
+
+        try await client.execute(
+            request: TestNetworkRequestWithBody(body: Payload(value: 7))
+        )
+
+        let request = try #require(session.capturedRequests.first)
+        #expect(request.httpBody == Data("encoded-wire-body".utf8))
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/x-netrunner-test")
     }
 
     @Test func requestBodyEncoderOverridesClientDefaultRequestEncoder() async throws {
@@ -170,7 +255,7 @@ struct NetworkClientTests {
             var body: RequestBody? {
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .millisecondsSince1970
-                return .json(payload, encoder: encoder)
+                return .encoded(payload, encoder: JSONRequestBodyEncoder(encoder: encoder))
             }
         }
 
@@ -179,7 +264,7 @@ struct NetworkClientTests {
         clientDefaultRequestEncoder.dateEncodingStrategy = .iso8601
         let client = makeClient(
             session: session,
-            defaultRequestEncoder: clientDefaultRequestEncoder
+            defaultRequestEncoder: JSONRequestBodyEncoder(encoder: clientDefaultRequestEncoder)
         )
 
         try await client.execute(request: MillisecondsDateRequest())
@@ -188,6 +273,41 @@ struct NetworkClientTests {
         let bodyText = try #require(String(data: body, encoding: .utf8))
         #expect(bodyText.contains("1000"))
         #expect(bodyText.contains("1970-01-01T00:00:01Z") == false)
+    }
+
+    @Test func jsonBodyUsesJSONWhenClientDefaultRequestEncoderIsCustom() async throws {
+        struct Payload: Codable, Sendable, Equatable {
+            let value: Int
+        }
+
+        struct JSONBodyRequest: NetworkRequest {
+            let baseURL = URL(string: "https://example.com")!
+            let method: HTTPMethod = .post
+            let endpoint: any Endpoint = TestEndpoint()
+            let payload = Payload(value: 9)
+
+            var body: RequestBody? {
+                .json(payload)
+            }
+        }
+
+        let session = stubbedSession(statusCode: 204)
+        let client = makeClient(
+            session: session,
+            defaultRequestEncoder: FixedRequestBodyEncoder(
+                text: "custom-client-default",
+                contentType: "application/x-custom"
+            )
+        )
+
+        try await client.execute(request: JSONBodyRequest())
+
+        let request = try #require(session.capturedRequests.first)
+        let body = try #require(request.httpBody)
+        let decoded = try JSONDecoder().decode(Payload.self, from: body)
+        #expect(decoded == Payload(value: 9))
+        #expect(body != Data("custom-client-default".utf8))
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
     }
 
     // MARK: - Decode failure
@@ -199,6 +319,24 @@ struct NetworkClientTests {
 
         await #expect(throws: NetworkError.self) {
             let _: Payload = try await client.execute(request: TestNetworkRequest())
+        }
+    }
+
+    @Test func customResponseDecoderErrorsAreWrappedAsDecodingFailed() async {
+        struct Payload: Decodable {
+            let id: Int
+        }
+
+        let session = stubbedSession(statusCode: 200, data: Data("custom".utf8))
+        let client = makeClient(session: session, defaultResponseDecoder: FailingResponseBodyDecoder())
+
+        do {
+            let _: Payload = try await client.execute(request: TestNetworkRequest())
+            Issue.record("Expected custom decoder error to be wrapped")
+        } catch NetworkError.decodingFailed(let error) {
+            #expect(error is TestCodingError)
+        } catch {
+            Issue.record("Expected decodingFailed, got \(error)")
         }
     }
 
