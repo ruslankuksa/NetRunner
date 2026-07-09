@@ -69,9 +69,28 @@ struct NetworkRequestTests {
 
     // MARK: - GET + body throws
 
+    @Test func bodylessRequestDefaultsToNoHTTPBody() throws {
+        let req = TestNetworkRequest()
+        let urlReq = try req.makeURLRequest()
+        #expect(urlReq.httpBody == nil)
+    }
+
+    @Test func postRequestEncodesConcreteSendableBody() throws {
+        struct Payload: Codable, Sendable, Equatable {
+            let value: Int
+        }
+
+        let req = TestNetworkRequestWithBody(httpBody: Payload(value: 1))
+        let urlReq = try req.makeURLRequest()
+        let body = try #require(urlReq.httpBody)
+        let decoded = try JSONDecoder().decode(Payload.self, from: body)
+
+        #expect(decoded == Payload(value: 1))
+    }
+
     @Test func getWithBodyThrowsHttpBodyNotAllowedForGET() {
-        struct Payload: Encodable { let value = 1 }
-        let req = TestNetworkRequest(method: .get, httpBody: Payload())
+        struct Payload: Encodable, Sendable { let value = 1 }
+        let req = TestNetworkRequestWithBody(method: .get, httpBody: Payload())
         #expect(throws: NetworkError.httpBodyNotAllowedForGET) {
             try req.makeURLRequest()
         }

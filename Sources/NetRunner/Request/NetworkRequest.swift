@@ -3,7 +3,7 @@ import Foundation
 
 /// Query parameters for a network request.
 ///
-/// Values must be `Sendable` so upload requests can cross task boundaries
+/// Values must be `Sendable` so requests can cross task boundaries
 /// under Swift concurrency checking.
 public typealias QueryParameters = [String: any Sendable]
 
@@ -12,13 +12,13 @@ public typealias HTTPHeaders = [String: String]
 
 /// Describes a single HTTP request: base URL, endpoint path, method, headers,
 /// query parameters, and optional body.
-public protocol NetworkRequest {
+public protocol NetworkRequest: Sendable {
     var baseURL: URL { get }
     var method: HTTPMethod { get }
     var endpoint: any Endpoint { get }
     var headers: HTTPHeaders? { get }
     var parameters: QueryParameters? { get }
-    var httpBody: Encodable? { get }
+    var httpBody: (any Encodable & Sendable)? { get }
 
     var decoder: JSONDecoder { get }
     var encoder: JSONEncoder { get }
@@ -27,6 +27,10 @@ public protocol NetworkRequest {
 }
 
 public extension NetworkRequest {
+
+    var httpBody: (any Encodable & Sendable)? {
+        nil
+    }
 
     var decoder: JSONDecoder {
         return .init()

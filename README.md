@@ -59,13 +59,44 @@ struct GetUserRequest: NetworkRequest {
     var endpoint: any Endpoint
     var headers: HTTPHeaders? = ["Accept": "application/json"]
     var parameters: QueryParameters? = nil
-    var httpBody: Encodable? = nil
 
     init(id: String) {
         endpoint = UserEndpoint.profile(id: id)
     }
 }
 ```
+
+Requests without bodies omit `httpBody`. Requests with bodies can keep a
+concrete payload type and expose it through `httpBody`:
+
+```swift
+struct UpdateUserRequest: NetworkRequest {
+    struct Body: Encodable, Sendable {
+        let name: String
+    }
+
+    var baseURL: URL { URL(string: "https://api.example.com")! }
+    var method: HTTPMethod { .put }
+    var endpoint: any Endpoint
+    var headers: HTTPHeaders? = ["Content-Type": "application/json"]
+    var parameters: QueryParameters? = nil
+    private let body: Body
+
+    var httpBody: (any Encodable & Sendable)? {
+        body
+    }
+
+    init(id: String, name: String) {
+        endpoint = UserEndpoint.profile(id: id)
+        body = Body(name: name)
+    }
+}
+```
+
+`NetworkRequest` is `Sendable`, so concrete request types and request body
+payloads can be captured by `@Sendable` retry or recovery closures under Swift
+concurrency checking. If you are migrating code that used
+`httpBody: Encodable?`, use `httpBody: (any Encodable & Sendable)?` instead.
 
 ### 3. Create a client and execute
 
@@ -382,7 +413,10 @@ struct SearchRequest: NetworkRequest {
 
 Default is `.brackets`.
 
-`QueryParameters` stores `Sendable` values, so common query literals such as strings, numbers, booleans, and arrays of those values work in Swift 5 and Swift 6 concurrency checking.
+`NetworkRequest` is `Sendable`. `QueryParameters` stores `Sendable` values,
+and request bodies must be `Encodable & Sendable`, so common query literals such
+as strings, numbers, booleans, and arrays of those values work in Swift 5 and
+Swift 6 concurrency checking.
 
 ---
 
