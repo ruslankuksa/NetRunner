@@ -101,10 +101,10 @@ struct NetworkRequestSwift6ProbeTests {
             let baseURL = URL(string: "https://example.com")!
             let method: HTTPMethod = .post
             let endpoint: any Endpoint = ProbeEndpoint()
-            private let body = Payload(id: 1)
+            private let payload = Payload(id: 1)
 
-            var httpBody: (any Encodable & Sendable)? {
-                body
+            var body: RequestBody? {
+                .json(payload)
             }
         }
 

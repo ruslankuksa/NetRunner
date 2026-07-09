@@ -23,7 +23,10 @@ released under a new major version.
   `maxRetries`.
 - Opened `HTTPMethod` to custom methods.
 - Added default `headers` and `parameters` request implementations and
-  client-level JSON encoder/decoder defaults.
+  client-level request encoder and response decoder defaults.
+- Added `RequestBody` and `RequestOptions` so outbound body encoding,
+  per-request response decoding, array encoding, and cache policy are grouped
+  by responsibility.
 
 ## 3.5.0
 

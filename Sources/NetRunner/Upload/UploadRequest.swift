@@ -2,7 +2,7 @@
 import Foundation
 
 /// Describes a file upload request: base URL, endpoint path, method, headers,
-/// query parameters, and an `UploadBody` source.
+/// query parameters, an `UploadBody` source, and request options.
 public protocol UploadRequest: Sendable {
     var baseURL: URL { get }
     var method: HTTPMethod { get }
@@ -10,10 +10,7 @@ public protocol UploadRequest: Sendable {
     var headers: HTTPHeaders? { get }
     var parameters: QueryParameters? { get }
     var uploadBody: UploadBody { get }
-
-    var decoder: JSONDecoder? { get }
-    var arrayEncoding: ArrayEncoding { get }
-    var cachePolicy: URLRequest.CachePolicy { get }
+    var options: RequestOptions { get }
 }
 
 public extension UploadRequest {
@@ -25,16 +22,8 @@ public extension UploadRequest {
         nil
     }
 
-    var decoder: JSONDecoder? {
-        nil
-    }
-
-    var arrayEncoding: ArrayEncoding {
-        return .brackets
-    }
-
-    var cachePolicy: URLRequest.CachePolicy {
-        return .useProtocolCachePolicy
+    var options: RequestOptions {
+        .default
     }
 
     /// Builds a `URLRequest` from this upload request's properties. Does not
@@ -47,8 +36,8 @@ public extension UploadRequest {
             method: method,
             headers: headers,
             parameters: parameters,
-            arrayEncoding: arrayEncoding,
-            cachePolicy: cachePolicy
+            arrayEncoding: options.arrayEncoding,
+            cachePolicy: options.cachePolicy
         )
     }
 }

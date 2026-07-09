@@ -11,8 +11,8 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
     case invalidResponse
     /// The response data could not be decoded into the expected type.
     case decodingFailed(any Error & Sendable)
-    /// An HTTP body was set on a GET request, which is not allowed.
-    case httpBodyNotAllowedForGET
+    /// A request body was set on a GET request, which is not allowed.
+    case requestBodyNotAllowedForGET
     /// An upload body was set on a GET request, which is not allowed.
     case uploadBodyNotAllowedForGET
     /// The server returned HTTP 401 Unauthorized.
@@ -38,8 +38,8 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
             return "Invalid response."
         case .decodingFailed(let error):
             return "Unable to decode received data: \(error)"
-        case .httpBodyNotAllowedForGET:
-            return "HTTP body is not allowed in GET request"
+        case .requestBodyNotAllowedForGET:
+            return "Request body is not allowed in GET request"
         case .uploadBodyNotAllowedForGET:
             return "Upload body is not allowed in GET request"
         case .unauthorized:
@@ -62,7 +62,7 @@ public enum NetworkError: LocalizedError, Equatable, Sendable {
         case (.invalidURL, .invalidURL): return true
         case (.requestFailed(let a), .requestFailed(let b)): return a == b
         case (.invalidResponse, .invalidResponse): return true
-        case (.httpBodyNotAllowedForGET, .httpBodyNotAllowedForGET): return true
+        case (.requestBodyNotAllowedForGET, .requestBodyNotAllowedForGET): return true
         case (.uploadBodyNotAllowedForGET, .uploadBodyNotAllowedForGET): return true
         case (.unauthorized(let a), .unauthorized(let b)): return a == b
         case (.timeout, .timeout): return true

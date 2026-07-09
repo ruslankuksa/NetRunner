@@ -11,19 +11,15 @@ public typealias QueryParameters = [String: QueryValue]
 public typealias HTTPHeaders = [String: String]
 
 /// Describes a single HTTP request: base URL, endpoint path, method, headers,
-/// query parameters, and optional body.
+/// query parameters, optional body, and request options.
 public protocol NetworkRequest: Sendable {
     var baseURL: URL { get }
     var method: HTTPMethod { get }
     var endpoint: any Endpoint { get }
     var headers: HTTPHeaders? { get }
     var parameters: QueryParameters? { get }
-    var httpBody: (any Encodable & Sendable)? { get }
-
-    var decoder: JSONDecoder? { get }
-    var encoder: JSONEncoder? { get }
-    var arrayEncoding: ArrayEncoding { get }
-    var cachePolicy: URLRequest.CachePolicy { get }
+    var body: RequestBody? { get }
+    var options: RequestOptions { get }
 }
 
 public extension NetworkRequest {
@@ -36,24 +32,12 @@ public extension NetworkRequest {
         nil
     }
 
-    var httpBody: (any Encodable & Sendable)? {
+    var body: RequestBody? {
         nil
     }
 
-    var decoder: JSONDecoder? {
-        nil
-    }
-
-    var encoder: JSONEncoder? {
-        nil
-    }
-
-    var arrayEncoding: ArrayEncoding {
-        return .brackets
-    }
-
-    var cachePolicy: URLRequest.CachePolicy {
-        return .useProtocolCachePolicy
+    var options: RequestOptions {
+        .default
     }
 
     /// Builds a `URLRequest` from this network request's properties.
@@ -64,14 +48,15 @@ public extension NetworkRequest {
             method: method,
             headers: headers,
             parameters: parameters,
-            arrayEncoding: arrayEncoding,
-            cachePolicy: cachePolicy
+            arrayEncoding: options.arrayEncoding,
+            cachePolicy: options.cachePolicy
         )
-        if let httpBody {
-            guard method != .get else {
-                throw NetworkError.httpBodyNotAllowedForGET
-            }
-            request.httpBody = try (encoder ?? JSONEncoder()).encode(httpBody)
+        if let body {
+            try body.apply(
+                to: &request,
+                method: method,
+                defaultRequestEncoder: JSONEncoder()
+            )
         }
         return request
     }

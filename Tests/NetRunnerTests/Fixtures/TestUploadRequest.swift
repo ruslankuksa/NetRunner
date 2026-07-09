@@ -8,8 +8,7 @@ struct TestUploadRequest: UploadRequest {
     var headers: HTTPHeaders?
     var parameters: QueryParameters?
     var uploadBody: UploadBody
-    var cachePolicy: URLRequest.CachePolicy
-    var arrayEncoding: ArrayEncoding
+    var options: RequestOptions
 
     init(
         baseURL: URL = URL(string: "https://example.com")!,
@@ -18,6 +17,7 @@ struct TestUploadRequest: UploadRequest {
         headers: HTTPHeaders? = nil,
         parameters: QueryParameters? = nil,
         uploadBody: UploadBody,
+        options: RequestOptions? = nil,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         arrayEncoding: ArrayEncoding = .brackets
     ) {
@@ -27,7 +27,9 @@ struct TestUploadRequest: UploadRequest {
         self.headers = headers
         self.parameters = parameters
         self.uploadBody = uploadBody
-        self.cachePolicy = cachePolicy
-        self.arrayEncoding = arrayEncoding
+        self.options = options ?? RequestOptions(
+            arrayEncoding: arrayEncoding,
+            cachePolicy: cachePolicy
+        )
     }
 }

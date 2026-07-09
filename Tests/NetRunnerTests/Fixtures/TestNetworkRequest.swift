@@ -8,8 +8,7 @@ struct TestNetworkRequest: NetworkRequest {
     var endpoint: any Endpoint
     var headers: HTTPHeaders?
     var parameters: QueryParameters?
-    var cachePolicy: URLRequest.CachePolicy
-    var arrayEncoding: ArrayEncoding
+    var options: RequestOptions
 
     init(
         baseURL: URL = URL(string: "https://example.com")!,
@@ -17,6 +16,7 @@ struct TestNetworkRequest: NetworkRequest {
         endpoint: any Endpoint = TestEndpoint(),
         headers: HTTPHeaders? = nil,
         parameters: QueryParameters? = nil,
+        options: RequestOptions? = nil,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         arrayEncoding: ArrayEncoding = .brackets
     ) {
@@ -25,8 +25,10 @@ struct TestNetworkRequest: NetworkRequest {
         self.endpoint = endpoint
         self.headers = headers
         self.parameters = parameters
-        self.cachePolicy = cachePolicy
-        self.arrayEncoding = arrayEncoding
+        self.options = options ?? RequestOptions(
+            arrayEncoding: arrayEncoding,
+            cachePolicy: cachePolicy
+        )
     }
 }
 
@@ -36,12 +38,12 @@ struct TestNetworkRequestWithBody<Body: Encodable & Sendable>: NetworkRequest {
     var endpoint: any Endpoint
     var headers: HTTPHeaders?
     var parameters: QueryParameters?
-    var cachePolicy: URLRequest.CachePolicy
-    var arrayEncoding: ArrayEncoding
-    private var body: Body?
+    var options: RequestOptions
+    private var payload: Body?
+    private var requestBodyEncoder: JSONEncoder?
 
-    var httpBody: (any Encodable & Sendable)? {
-        body
+    var body: RequestBody? {
+        payload.map { .json($0, encoder: requestBodyEncoder) }
     }
 
     init(
@@ -50,7 +52,9 @@ struct TestNetworkRequestWithBody<Body: Encodable & Sendable>: NetworkRequest {
         endpoint: any Endpoint = TestEndpoint(),
         headers: HTTPHeaders? = nil,
         parameters: QueryParameters? = nil,
-        httpBody: Body? = nil,
+        body: Body? = nil,
+        bodyEncoder: JSONEncoder? = nil,
+        options: RequestOptions? = nil,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         arrayEncoding: ArrayEncoding = .brackets
     ) {
@@ -59,8 +63,11 @@ struct TestNetworkRequestWithBody<Body: Encodable & Sendable>: NetworkRequest {
         self.endpoint = endpoint
         self.headers = headers
         self.parameters = parameters
-        self.body = httpBody
-        self.cachePolicy = cachePolicy
-        self.arrayEncoding = arrayEncoding
+        self.payload = body
+        self.requestBodyEncoder = bodyEncoder
+        self.options = options ?? RequestOptions(
+            arrayEncoding: arrayEncoding,
+            cachePolicy: cachePolicy
+        )
     }
 }

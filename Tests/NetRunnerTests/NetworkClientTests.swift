@@ -14,8 +14,8 @@ struct NetworkClientTests {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultDecoder: JSONDecoder = JSONDecoder(),
-        defaultEncoder: JSONEncoder = JSONEncoder(),
+        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
+        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = MockConnectivityMonitor()
     ) -> NetworkClient {
@@ -25,8 +25,8 @@ struct NetworkClientTests {
             requestInterceptors: requestInterceptors,
             retryInterceptors: retryInterceptors,
             responseValidator: responseValidator,
-            defaultDecoder: defaultDecoder,
-            defaultEncoder: defaultEncoder,
+            defaultRequestEncoder: defaultRequestEncoder,
+            defaultResponseDecoder: defaultResponseDecoder,
             connectivityRetryPolicy: connectivityRetryPolicy,
             connectivityMonitor: connectivityMonitor
         )
@@ -90,7 +90,7 @@ struct NetworkClientTests {
         #expect(session.callCount == 1)
     }
 
-    @Test func clientDefaultDecoderIsUsedWhenRequestDoesNotOverride() async throws {
+    @Test func clientDefaultResponseDecoderIsUsedWhenRequestDoesNotOverride() async throws {
         struct Payload: Decodable {
             let createdAt: Date
         }
@@ -99,14 +99,14 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 200, data: json)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let client = makeClient(session: session, defaultDecoder: decoder)
+        let client = makeClient(session: session, defaultResponseDecoder: decoder)
 
         let payload: Payload = try await client.execute(request: TestNetworkRequest())
 
         #expect(payload.createdAt.timeIntervalSince1970 == 0)
     }
 
-    @Test func requestDecoderOverridesClientDefaultDecoder() async throws {
+    @Test func requestResponseDecoderOverridesClientDefaultResponseDecoder() async throws {
         struct Payload: Decodable {
             let createdAt: Date
         }
@@ -116,25 +116,28 @@ struct NetworkClientTests {
             let method: HTTPMethod = .get
             let endpoint: any Endpoint = TestEndpoint()
 
-            var decoder: JSONDecoder? {
+            var options: RequestOptions {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
-                return decoder
+                return RequestOptions(responseDecoder: decoder)
             }
         }
 
         let json = #"{"createdAt":"1970-01-01T00:00:00Z"}"#.data(using: .utf8)!
         let session = stubbedSession(statusCode: 200, data: json)
-        let clientDefaultDecoder = JSONDecoder()
-        clientDefaultDecoder.dateDecodingStrategy = .secondsSince1970
-        let client = makeClient(session: session, defaultDecoder: clientDefaultDecoder)
+        let clientDefaultResponseDecoder = JSONDecoder()
+        clientDefaultResponseDecoder.dateDecodingStrategy = .secondsSince1970
+        let client = makeClient(
+            session: session,
+            defaultResponseDecoder: clientDefaultResponseDecoder
+        )
 
         let payload: Payload = try await client.execute(request: ISODateRequest())
 
         #expect(payload.createdAt.timeIntervalSince1970 == 0)
     }
 
-    @Test func clientDefaultEncoderIsUsedWhenRequestDoesNotOverride() async throws {
+    @Test func clientDefaultRequestEncoderIsUsedWhenBodyDoesNotOverride() async throws {
         struct Payload: Encodable, Sendable {
             let createdAt: Date
         }
@@ -142,10 +145,10 @@ struct NetworkClientTests {
         let session = stubbedSession(statusCode: 204)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let client = makeClient(session: session, defaultEncoder: encoder)
+        let client = makeClient(session: session, defaultRequestEncoder: encoder)
 
         try await client.execute(
-            request: TestNetworkRequestWithBody(httpBody: Payload(createdAt: Date(timeIntervalSince1970: 0)))
+            request: TestNetworkRequestWithBody(body: Payload(createdAt: Date(timeIntervalSince1970: 0)))
         )
 
         let body = try #require(session.capturedRequests.first?.httpBody)
@@ -153,7 +156,7 @@ struct NetworkClientTests {
         #expect(bodyText.contains(#""1970-01-01T00:00:00Z""#))
     }
 
-    @Test func requestEncoderOverridesClientDefaultEncoder() async throws {
+    @Test func requestBodyEncoderOverridesClientDefaultRequestEncoder() async throws {
         struct Payload: Encodable, Sendable {
             let createdAt: Date
         }
@@ -164,28 +167,27 @@ struct NetworkClientTests {
             let endpoint: any Endpoint = TestEndpoint()
             let payload = Payload(createdAt: Date(timeIntervalSince1970: 1))
 
-            var httpBody: (any Encodable & Sendable)? {
-                payload
-            }
-
-            var encoder: JSONEncoder? {
+            var body: RequestBody? {
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .millisecondsSince1970
-                return encoder
+                return .json(payload, encoder: encoder)
             }
         }
 
         let session = stubbedSession(statusCode: 204)
-        let clientDefaultEncoder = JSONEncoder()
-        clientDefaultEncoder.dateEncodingStrategy = .iso8601
-        let client = makeClient(session: session, defaultEncoder: clientDefaultEncoder)
+        let clientDefaultRequestEncoder = JSONEncoder()
+        clientDefaultRequestEncoder.dateEncodingStrategy = .iso8601
+        let client = makeClient(
+            session: session,
+            defaultRequestEncoder: clientDefaultRequestEncoder
+        )
 
         try await client.execute(request: MillisecondsDateRequest())
 
         let body = try #require(session.capturedRequests.first?.httpBody)
         let bodyText = try #require(String(data: body, encoding: .utf8))
         #expect(bodyText.contains("1000"))
-        #expect(!bodyText.contains("1970-01-01T00:00:01Z"))
+        #expect(bodyText.contains("1970-01-01T00:00:01Z") == false)
     }
 
     // MARK: - Decode failure

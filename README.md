@@ -69,8 +69,8 @@ struct GetUserRequest: NetworkRequest {
 }
 ```
 
-Requests without bodies omit `httpBody`. Requests with bodies can keep a
-concrete payload type and expose it through `httpBody`:
+Requests without bodies omit `body`. Requests with JSON bodies can keep a
+concrete payload type and expose it through `RequestBody.json`:
 
 ```swift
 struct UpdateUserRequest: NetworkRequest {
@@ -81,24 +81,23 @@ struct UpdateUserRequest: NetworkRequest {
     var baseURL: URL { URL(string: "https://api.example.com")! }
     var method: HTTPMethod { .put }
     var endpoint: any Endpoint
-    var headers: HTTPHeaders? = ["Content-Type": "application/json"]
-    private let body: Body
+    private let payload: Body
 
-    var httpBody: (any Encodable & Sendable)? {
-        body
+    var body: RequestBody? {
+        .json(payload)
     }
 
     init(id: String, name: String) {
         endpoint = UserEndpoint.profile(id: id)
-        body = Body(name: name)
+        payload = Body(name: name)
     }
 }
 ```
 
 `NetworkRequest` is `Sendable`, so concrete request types and request body
 payloads can be captured by `@Sendable` retry or recovery closures under Swift
-concurrency checking. If you are migrating code that used
-`httpBody: Encodable?`, use `httpBody: (any Encodable & Sendable)?` instead.
+concurrency checking. If you are migrating code that used `httpBody`, move JSON
+payloads to `body: RequestBody? { .json(payload) }`.
 
 ### 3. Create a client and execute
 
@@ -158,8 +157,8 @@ public final class NetworkClient: NetRunner, Sendable {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultDecoder: JSONDecoder = JSONDecoder(),
-        defaultEncoder: JSONEncoder = JSONEncoder(),
+        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
+        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil
     )
@@ -287,7 +286,7 @@ Multiple interceptors are applied left-to-right before each attempt, including r
 ### JSON coding
 
 Configure JSON coding at the client level when most requests share the same
-encoding rules:
+encoding and decoding rules:
 
 ```swift
 let decoder = JSONDecoder()
@@ -297,13 +296,26 @@ let encoder = JSONEncoder()
 encoder.dateEncodingStrategy = .iso8601
 
 let client = NetworkClient(
-    defaultDecoder: decoder,
-    defaultEncoder: encoder
+    defaultRequestEncoder: encoder,
+    defaultResponseDecoder: decoder
 )
 ```
 
-Individual requests can still override `decoder` or `encoder` when one
-endpoint needs different behavior.
+Individual request bodies can override the request encoder:
+
+```swift
+var body: RequestBody? {
+    .json(payload, encoder: endpointSpecificEncoder)
+}
+```
+
+Individual requests can override response decoding through `RequestOptions`:
+
+```swift
+var options: RequestOptions {
+    RequestOptions(responseDecoder: endpointSpecificDecoder)
+}
+```
 
 ### Response validation
 
@@ -413,7 +425,9 @@ Per-request cache policy via `NetworkRequest`:
 ```swift
 struct CatalogRequest: NetworkRequest {
     // Return stale cache rather than failing when offline
-    var cachePolicy: URLRequest.CachePolicy { .returnCacheDataElseLoad }
+    var options: RequestOptions {
+        RequestOptions(cachePolicy: .returnCacheDataElseLoad)
+    }
     ...
 }
 ```
@@ -477,7 +491,7 @@ do {
 | `.requestFailed(String)` | Unhandled request or URL error |
 | `.invalidResponse` | Response was not an `HTTPURLResponse` |
 | `.decodingFailed(Error)` | JSON decoding failed |
-| `.httpBodyNotAllowedForGET` | `httpBody` set on a GET request |
+| `.requestBodyNotAllowedForGET` | Request body set on a GET request |
 | `.uploadBodyNotAllowedForGET` | Upload body set on a GET request |
 | `.unauthorized(response:)` | HTTP 401 with response details |
 | `.clientError(response:)` | HTTP 400–499 (except 401) with response details |
@@ -497,9 +511,11 @@ Control how array query parameters are serialised:
 ```swift
 struct SearchRequest: NetworkRequest {
     var parameters: QueryParameters? = ["ids": [1, 2, 3]]
-    var arrayEncoding: ArrayEncoding { .brackets }   // ids[]=1&ids[]=2&ids[]=3
-    // .noBrackets  →  ids=1&ids=2&ids=3
-    // .commaSeparated  →  ids=1,2,3
+    var options: RequestOptions {
+        RequestOptions(arrayEncoding: .brackets)   // ids[]=1&ids[]=2&ids[]=3
+        // .noBrackets  ->  ids=1&ids=2&ids=3
+        // .commaSeparated  ->  ids=1,2,3
+    }
 }
 ```
 

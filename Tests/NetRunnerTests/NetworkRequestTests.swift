@@ -94,7 +94,7 @@ struct NetworkRequestTests {
         let req = TestNetworkRequest(parameters: ["ids[]": [1, 2, 3]], arrayEncoding: .noBrackets)
         let urlReq = try req.makeURLRequest()
         let query = urlReq.url?.query ?? ""
-        #expect(!query.contains("[]"), "brackets should be stripped; got: \(query)")
+        #expect(query.contains("[]") == false, "brackets should be stripped; got: \(query)")
         #expect(query.contains("ids=1"), "query: \(query)")
         #expect(query.contains("ids=2"), "query: \(query)")
         #expect(query.contains("ids=3"), "query: \(query)")
@@ -126,7 +126,7 @@ struct NetworkRequestTests {
         #expect(query.contains("active=true"), "query: \(query)")
     }
 
-    // MARK: - GET + body throws
+    // MARK: - Request body
 
     @Test func bodylessRequestDefaultsToNoHTTPBody() throws {
         let req = TestNetworkRequest()
@@ -139,18 +139,62 @@ struct NetworkRequestTests {
             let value: Int
         }
 
-        let req = TestNetworkRequestWithBody(httpBody: Payload(value: 1))
+        let req = TestNetworkRequestWithBody(body: Payload(value: 1))
         let urlReq = try req.makeURLRequest()
         let body = try #require(urlReq.httpBody)
         let decoded = try JSONDecoder().decode(Payload.self, from: body)
 
         #expect(decoded == Payload(value: 1))
+        #expect(urlReq.value(forHTTPHeaderField: "Content-Type") == "application/json")
     }
 
-    @Test func getWithBodyThrowsHttpBodyNotAllowedForGET() {
+    @Test func jsonBodyPreservesExplicitContentType() throws {
+        struct Payload: Encodable, Sendable {
+            let value: Int
+        }
+
+        let req = TestNetworkRequestWithBody(
+            headers: ["Content-Type": "application/vnd.api+json"],
+            body: Payload(value: 1)
+        )
+
+        let urlReq = try req.makeURLRequest()
+
+        #expect(urlReq.value(forHTTPHeaderField: "Content-Type") == "application/vnd.api+json")
+    }
+
+    @Test func dataBodyWritesRawBytesAndContentType() throws {
+        struct DataRequest: NetworkRequest {
+            let baseURL = URL(string: "https://example.com")!
+            let method: HTTPMethod = .post
+            let endpoint: any Endpoint = TestEndpoint()
+            let body: RequestBody? = .data(Data("raw-bytes".utf8), contentType: "text/plain")
+        }
+
+        let urlReq = try DataRequest().makeURLRequest()
+
+        #expect(urlReq.httpBody == Data("raw-bytes".utf8))
+        #expect(urlReq.value(forHTTPHeaderField: "Content-Type") == "text/plain")
+    }
+
+    @Test func dataBodyWithoutContentTypeDoesNotSetContentType() throws {
+        struct DataRequest: NetworkRequest {
+            let baseURL = URL(string: "https://example.com")!
+            let method: HTTPMethod = .post
+            let endpoint: any Endpoint = TestEndpoint()
+            let body: RequestBody? = .data(Data("raw-bytes".utf8))
+        }
+
+        let urlReq = try DataRequest().makeURLRequest()
+
+        #expect(urlReq.httpBody == Data("raw-bytes".utf8))
+        #expect(urlReq.value(forHTTPHeaderField: "Content-Type") == nil)
+    }
+
+    @Test func getWithBodyThrowsRequestBodyNotAllowedForGET() {
         struct Payload: Encodable, Sendable { let value = 1 }
-        let req = TestNetworkRequestWithBody(method: .get, httpBody: Payload())
-        #expect(throws: NetworkError.httpBodyNotAllowedForGET) {
+        let req = TestNetworkRequestWithBody(method: .get, body: Payload())
+        #expect(throws: NetworkError.requestBodyNotAllowedForGET) {
             try req.makeURLRequest()
         }
     }

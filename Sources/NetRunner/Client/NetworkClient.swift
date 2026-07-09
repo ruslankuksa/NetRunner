@@ -33,8 +33,8 @@ public final class NetworkClient: NetRunner, Sendable {
     private let requestInterceptors: [any RequestInterceptor]
     private let retryInterceptors: [any RetryInterceptor]
     private let responseValidator: any ResponseValidator
-    private let defaultDecoder: JSONDecoder
-    private let defaultEncoder: JSONEncoder
+    private let defaultRequestEncoder: JSONEncoder
+    private let defaultResponseDecoder: JSONDecoder
     private let connectivityRetryPolicy: ConnectivityRetryPolicy
     private let connectivityMonitorStorage: ConnectivityMonitorStorage
 
@@ -50,8 +50,8 @@ public final class NetworkClient: NetRunner, Sendable {
     ///   - requestInterceptors: Interceptors applied before each request attempt.
     ///   - retryInterceptors: Interceptors that decide whether retry attempts may proceed.
     ///   - responseValidator: The validator used to map URL responses to success or thrown errors.
-    ///   - defaultDecoder: The decoder used when a request does not provide its own decoder.
-    ///   - defaultEncoder: The encoder used when a request does not provide its own encoder.
+    ///   - defaultRequestEncoder: The encoder used when a JSON request body does not provide its own encoder.
+    ///   - defaultResponseDecoder: The decoder used when a request does not provide its own response decoder.
     ///   - connectivityRetryPolicy: The retry policy for no-connectivity failures.
     ///   - connectivityMonitor: The monitor used to wait for connectivity restoration. When
     ///     omitted, `NetworkClient` creates one only if connectivity retry is enabled.
@@ -61,8 +61,8 @@ public final class NetworkClient: NetRunner, Sendable {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultDecoder: JSONDecoder = JSONDecoder(),
-        defaultEncoder: JSONEncoder = JSONEncoder(),
+        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
+        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil
     ) {
@@ -72,8 +72,8 @@ public final class NetworkClient: NetRunner, Sendable {
             requestInterceptors: requestInterceptors,
             retryInterceptors: retryInterceptors,
             responseValidator: responseValidator,
-            defaultDecoder: defaultDecoder,
-            defaultEncoder: defaultEncoder,
+            defaultRequestEncoder: defaultRequestEncoder,
+            defaultResponseDecoder: defaultResponseDecoder,
             connectivityRetryPolicy: connectivityRetryPolicy,
             connectivityMonitor: connectivityMonitor,
             connectivityMonitorFactory: { NetworkPathConnectivityMonitor() }
@@ -86,8 +86,8 @@ public final class NetworkClient: NetRunner, Sendable {
         requestInterceptors: [any RequestInterceptor] = [],
         retryInterceptors: [any RetryInterceptor] = [],
         responseValidator: any ResponseValidator = DefaultResponseValidator(),
-        defaultDecoder: JSONDecoder = JSONDecoder(),
-        defaultEncoder: JSONEncoder = JSONEncoder(),
+        defaultRequestEncoder: JSONEncoder = JSONEncoder(),
+        defaultResponseDecoder: JSONDecoder = JSONDecoder(),
         connectivityRetryPolicy: ConnectivityRetryPolicy = .disabled,
         connectivityMonitor: (any ConnectivityMonitor)? = nil,
         connectivityMonitorFactory: () -> any CancellableConnectivityMonitor
@@ -97,8 +97,8 @@ public final class NetworkClient: NetRunner, Sendable {
         self.requestInterceptors = requestInterceptors
         self.retryInterceptors = retryInterceptors
         self.responseValidator = responseValidator
-        self.defaultDecoder = defaultDecoder
-        self.defaultEncoder = defaultEncoder
+        self.defaultRequestEncoder = defaultRequestEncoder
+        self.defaultResponseDecoder = defaultResponseDecoder
         self.connectivityRetryPolicy = connectivityRetryPolicy
 
         if let connectivityMonitor {
@@ -122,7 +122,10 @@ public final class NetworkClient: NetRunner, Sendable {
     /// Executes a request and decodes its successful response body.
     public func execute<T: Decodable>(request: any NetworkRequest) async throws -> T {
         let data = try await performRequest(request)
-        return try Self.decodeData(data, decoder: request.decoder ?? defaultDecoder)
+        return try Self.decodeData(
+            data,
+            decoder: request.options.responseDecoder ?? defaultResponseDecoder
+        )
     }
 
     /// Executes a request that does not require a decoded response body.
@@ -138,7 +141,7 @@ public final class NetworkClient: NetRunner, Sendable {
         request: any UploadRequest,
         responseType: T.Type = T.self
     ) -> AsyncThrowingStream<UploadEvent<T>, Error> {
-        let decoder = request.decoder ?? defaultDecoder
+        let decoder = request.options.responseDecoder ?? defaultResponseDecoder
         return makeUploadStream(request: request) { data in
             try Self.decodeData(data, decoder: decoder)
         }
@@ -188,14 +191,15 @@ public final class NetworkClient: NetRunner, Sendable {
             method: networkRequest.method,
             headers: networkRequest.headers,
             parameters: networkRequest.parameters,
-            arrayEncoding: networkRequest.arrayEncoding,
-            cachePolicy: networkRequest.cachePolicy
+            arrayEncoding: networkRequest.options.arrayEncoding,
+            cachePolicy: networkRequest.options.cachePolicy
         )
-        if let httpBody = networkRequest.httpBody {
-            guard networkRequest.method != .get else {
-                throw NetworkError.httpBodyNotAllowedForGET
-            }
-            request.httpBody = try (networkRequest.encoder ?? defaultEncoder).encode(httpBody)
+        if let body = networkRequest.body {
+            try body.apply(
+                to: &request,
+                method: networkRequest.method,
+                defaultRequestEncoder: defaultRequestEncoder
+            )
         }
         return request
     }
