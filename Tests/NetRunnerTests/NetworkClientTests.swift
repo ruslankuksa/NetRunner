@@ -459,6 +459,58 @@ struct NetworkClientTests {
         #expect(session.callCount == 2, "1 initial + 1 retry = 2")
     }
 
+    @Test func cancelledTransportFailureThrowsCancellationErrorWithoutRetry() async {
+        let session = MockURLSession()
+        session.stubbedError = URLError(.cancelled)
+        let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 3, delay: 0))
+
+        await #expect(throws: CancellationError.self) {
+            try await client.execute(request: TestNetworkRequest())
+        }
+
+        #expect(session.callCount == 1, "Cancelled requests should not be retried")
+    }
+
+    @Test func nsURLCancellationErrorThrowsCancellationErrorWithoutRetry() async {
+        let session = MockURLSession()
+        session.stubbedError = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+        let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 3, delay: 0))
+
+        await #expect(throws: CancellationError.self) {
+            try await client.execute(request: TestNetworkRequest())
+        }
+
+        #expect(session.callCount == 1, "Cancelled requests should not be retried")
+    }
+
+    @Test func cancelledTaskTransportFailureThrowsCancellationError() async {
+        let session = MockURLSession()
+        session.stubbedError = URLError(.timedOut)
+        session.cancelCurrentTaskBeforeThrowing = true
+        let client = makeClient(session: session)
+        let task = Task {
+            try await client.execute(request: TestNetworkRequest())
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+
+        #expect(session.callCount == 1)
+    }
+
+    @Test func cancellationErrorIsRethrownWithoutRetry() async {
+        let session = MockURLSession()
+        session.stubbedError = CancellationError()
+        let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 3, delay: 0))
+
+        await #expect(throws: CancellationError.self) {
+            try await client.execute(request: TestNetworkRequest())
+        }
+
+        #expect(session.callCount == 1, "Cancelled requests should not be retried")
+    }
+
     @Test func retryPolicyDoesNotRetryPostByDefault() async {
         let session = stubbedSession(statusCode: 503)
         let client = makeClient(session: session, retryPolicy: .fixed(maxRetries: 1, delay: 0))

@@ -286,9 +286,11 @@ public final class NetworkClient: NetRunner, Sendable {
                 let (data, response) = try await operation(urlRequest, attemptIndex)
                 try validate(response, data: data)
                 return data
-            } catch is CancellationError {
-                throw CancellationError()
             } catch {
+                if Task.isCancelled || Self.isCancellation(error) {
+                    throw CancellationError()
+                }
+
                 let networkError = error as? NetworkError ?? NetworkError(error)
 
                 if try await waitForConnectivityRetryIfNeeded(
@@ -327,6 +329,15 @@ public final class NetworkClient: NetRunner, Sendable {
                 attemptIndex += 1
             }
         }
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let urlError = error as NSError
+        return urlError.domain == NSURLErrorDomain && urlError.code == NSURLErrorCancelled
     }
 
     private func waitForConnectivityRetryIfNeeded(

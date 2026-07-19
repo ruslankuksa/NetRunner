@@ -189,6 +189,8 @@ let client = NetworkClient(
 
 Retry is only attempted for transient errors: `.timeout`, `.noConnectivity`, `.serverError`. Client errors (4xx) and decode errors are never retried. Transport failures from `URLSession`, such as `URLError(.timedOut)` and `URLError(.notConnectedToInternet)`, are mapped to `NetworkError` before retry decisions.
 
+`NetworkClient` surfaces cancellation as `CancellationError`, including `URLSession`'s `NSURLErrorCancelled` (`-999`) representation. Cancellation is handled before retry decisions and is never retried.
+
 Automatic retries default to idempotent HTTP methods: `.get`, `.put`, and
 `.delete`. If a request is safe to replay for your backend, opt in explicitly.
 Custom HTTP methods are supported with `HTTPMethod.custom(_:)` and are

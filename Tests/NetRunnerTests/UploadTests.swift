@@ -591,6 +591,28 @@ struct UploadTests {
         #expect(session.capturedUploadFileURLs == [uploadFile, uploadFile])
     }
 
+    @Test func cancelledUploadTransportFailureThrowsCancellationErrorWithoutRetry() async throws {
+        let uploadFile = try makeTemporaryFile(contents: "raw-bytes")
+        defer { try? FileManager.default.removeItem(at: uploadFile) }
+
+        let session = MockURLSession()
+        session.stubbedError = URLError(.cancelled)
+        let client = NetworkClient(
+            session: session,
+            retryPolicy: .fixed(maxRetries: 3, delay: 0, retryableMethods: [.post])
+        )
+        let request = TestUploadRequest(
+            method: .post,
+            uploadBody: .rawFile(fileURL: uploadFile, contentType: nil)
+        )
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await collect(client.upload(request: request))
+        }
+
+        #expect(session.capturedUploadFileURLs == [uploadFile], "Cancelled uploads should not be retried")
+    }
+
     @Test func requestInterceptorRunsForEachUploadRetryAttempt() async throws {
         let uploadFile = try makeTemporaryFile(contents: "raw-bytes")
         defer { try? FileManager.default.removeItem(at: uploadFile) }

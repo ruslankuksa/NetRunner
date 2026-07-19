@@ -27,6 +27,7 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
         headerFields: nil
     )!
     var stubbedError: Error?
+    var cancelCurrentTaskBeforeThrowing = false
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         capturedRequests.append(request)
@@ -34,6 +35,7 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
             return try dataResults.removeFirst().get()
         }
         if let error = stubbedError {
+            cancelCurrentTaskIfNeeded()
             throw error
         }
         return (stubbedData, stubbedResponse)
@@ -59,9 +61,20 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
             return try uploadResults.removeFirst().get()
         }
         if let error = stubbedError {
+            cancelCurrentTaskIfNeeded()
             throw error
         }
         return (stubbedData, stubbedResponse)
+    }
+
+    private func cancelCurrentTaskIfNeeded() {
+        guard cancelCurrentTaskBeforeThrowing else {
+            return
+        }
+
+        withUnsafeCurrentTask { task in
+            task?.cancel()
+        }
     }
 
     func stub(statusCode: Int) {
