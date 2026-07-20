@@ -6,13 +6,12 @@ final class AsyncSequenceNetworkPathConnectivityMonitor:
     NetworkPathConnectivityMonitorImplementation,
     @unchecked Sendable
 {
-    private let monitor: NWPathMonitor
-    private let waiterStore = ConnectivityWaiterStore()
+    private let source: any NetworkPathUpdateSource
     private let stateStore = ConnectivityStateStore()
     private let lock = NSLock()
-    private var observationTask: Task<Void, Never>?
+    private var isStarted = false
     private var isCancelled = false
-    
+
     var currentConnectivityState: ConnectivityState? {
         get async {
             stateStore.currentState
@@ -20,7 +19,11 @@ final class AsyncSequenceNetworkPathConnectivityMonitor:
     }
 
     init(monitor: NWPathMonitor) {
-        self.monitor = monitor
+        source = AsyncSequenceNetworkPathUpdateSource(monitor: monitor)
+    }
+
+    init(source: any NetworkPathUpdateSource) {
+        self.source = source
     }
 
     deinit {
@@ -29,24 +32,33 @@ final class AsyncSequenceNetworkPathConnectivityMonitor:
 
     func waitUntilConnected(timeout: TimeInterval?) async throws {
         try checkNotCancelled()
+        let updates = stateStore.updateStream(replayLatest: false)
         startIfNeeded()
 
-        if waiterStore.currentIsConnected {
+        if stateStore.currentState == .connected {
             return
         }
 
-        try await waiterStore.waitUntilConnected(timeout: timeout)
+        try await waitForConnectedUpdate(in: updates, timeout: timeout)
     }
 
     func waitForConnectivityRestoration(timeout: TimeInterval?) async throws {
         try checkNotCancelled()
+        let updates = stateStore.updateStream(replayLatest: false)
         startIfNeeded()
-        try await waiterStore.waitForConnectivityRestoration(timeout: timeout)
+        try await waitForConnectedUpdate(in: updates, timeout: timeout)
     }
 
     func connectivityStates() -> AsyncStream<ConnectivityState> {
+        let stream = stateStore.stream()
         startIfNeeded()
-        return stateStore.stream()
+        return stream
+    }
+
+    func connectivityStateUpdates() -> AsyncStream<ConnectivityStateUpdate> {
+        let stream = stateStore.updateStream()
+        startIfNeeded()
+        return stream
     }
 
     func cancel() {
@@ -56,36 +68,30 @@ final class AsyncSequenceNetworkPathConnectivityMonitor:
             return
         }
         isCancelled = true
-        let task = observationTask
-        observationTask = nil
         lock.unlock()
 
-        task?.cancel()
-        monitor.cancel()
-        waiterStore.resumeWaiters(throwing: CancellationError())
         stateStore.finish()
+        source.cancel()
     }
 
     private func startIfNeeded() {
         lock.lock()
-        let shouldStart = observationTask == nil && !isCancelled
+        let shouldStart = !isStarted && !isCancelled
         if shouldStart {
-            observationTask = Task { [monitor, weak waiterStore, weak stateStore] in
-                for await path in monitor {
-                    guard !Task.isCancelled else { break }
-                    guard let waiterStore, let stateStore else { break }
-                    Self.updatePath(path, waiterStore: waiterStore, stateStore: stateStore)
-                }
-
-                waiterStore?.resumeWaiters(throwing: CancellationError())
-                stateStore?.finish()
-            }
+            isStarted = true
         }
         lock.unlock()
 
-        if shouldStart {
-            Self.updatePath(monitor.currentPath, waiterStore: waiterStore, stateStore: stateStore)
-        }
+        guard shouldStart else { return }
+
+        source.start(
+            receiveUpdate: { [weak stateStore] state in
+                stateStore?.update(state)
+            },
+            receiveCompletion: { [weak stateStore] in
+                stateStore?.finish()
+            }
+        )
     }
 
     private func checkNotCancelled() throws {
@@ -96,15 +102,5 @@ final class AsyncSequenceNetworkPathConnectivityMonitor:
         if isCancelled {
             throw CancellationError()
         }
-    }
-
-    private static func updatePath(
-        _ path: NWPath,
-        waiterStore: ConnectivityWaiterStore,
-        stateStore: ConnectivityStateStore
-    ) {
-        let isConnected = path.status == .satisfied
-        waiterStore.updateConnectivity(isConnected)
-        stateStore.update(isConnected ? .connected : .disconnected)
     }
 }

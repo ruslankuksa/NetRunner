@@ -4,7 +4,7 @@ import Network
 /// A `ConnectivityMonitor` backed by `NWPathMonitor`.
 public final class NetworkPathConnectivityMonitor:
     ConnectivityMonitor,
-    ConnectivityStateProviding,
+    ConnectivityStateUpdateProviding,
     CancellableConnectivityMonitor,
     @unchecked Sendable
 {
@@ -27,6 +27,10 @@ public final class NetworkPathConnectivityMonitor:
         }
     }
 
+    init(implementation: any NetworkPathConnectivityMonitorImplementation) {
+        self.implementation = implementation
+    }
+
     deinit {
         cancel()
     }
@@ -41,6 +45,11 @@ public final class NetworkPathConnectivityMonitor:
 
     public func connectivityStates() -> AsyncStream<ConnectivityState> {
         implementation.connectivityStates()
+    }
+
+    /// Returns every evaluated path callback in sequence, including duplicate states.
+    public func connectivityStateUpdates() -> AsyncStream<ConnectivityStateUpdate> {
+        implementation.connectivityStateUpdates()
     }
 
     /// Stops path monitoring and finishes any active connectivity streams.
