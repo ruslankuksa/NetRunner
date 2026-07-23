@@ -265,7 +265,21 @@ let observationTask = Task { @MainActor in
 }
 ```
 
-The connectivity state stream is intended for app-level observation, such as an offline banner in a root view model. NetRunner provides the state stream and retry infrastructure; the app decides how to present offline UI. Prefer SwiftUI `.task {}` or cancel manually-created observation tasks when the owner is dismissed or deinitialized. `NWPath.Status.satisfied` is emitted as `.connected`; all other path statuses are emitted as `.disconnected`. Requests still throw `NetworkError.noConnectivity` when connectivity retry is disabled, times out, retry policy is exhausted, the request method is not retryable, or the request task is cancelled.
+Connectivity remains unknown (`currentConnectivityState == nil`) until `NWPathMonitor` delivers its first evaluated callback. `connectivityStates()` then replays the latest known state to new subscribers and emits only changes, making it suitable for app-level UI such as an offline banner.
+
+Use the ordered update stream when every evaluated callback matters for state observation or recovery coordination:
+
+```swift
+let recoveryTask = Task {
+    for await update in connectivityMonitor.connectivityStateUpdates() {
+        print("Connectivity update \(update.sequence): \(update.state)")
+    }
+}
+```
+
+`connectivityStateUpdates()` assigns a strictly increasing sequence number beginning at 1 and emits every evaluated callback, including consecutive equivalent states such as connected → connected. Its buffering is lossless after subscription, and a new subscriber replays only the latest evaluated update when one exists. Keep one subscription alive for continuous recovery observation so callbacks cannot fall into a gap between one-shot wait registrations. Calling `cancel()` finishes both connectivity streams.
+
+NetRunner provides the state streams and retry infrastructure; the app decides how to present offline UI. Prefer SwiftUI `.task {}` or cancel manually-created observation tasks when the owner is dismissed or deinitialized. `NWPath.Status.satisfied` is emitted as `.connected`; all other path statuses are emitted as `.disconnected`. Requests still throw `NetworkError.noConnectivity` when connectivity retry is disabled, times out, retry policy is exhausted, the request method is not retryable, or the request task is cancelled.
 
 ### Request interceptors
 

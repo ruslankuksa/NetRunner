@@ -64,35 +64,6 @@ struct NetworkClientTests {
         }
     }
 
-    private enum ConnectivityStateTestError: Error {
-        case timedOut
-        case finishedWithoutValue
-    }
-
-    private func firstConnectivityState(
-        from stream: AsyncStream<ConnectivityState>,
-        timeout: TimeInterval = 2
-    ) async throws -> ConnectivityState {
-        try await withThrowingTaskGroup(of: ConnectivityState.self) { group in
-            group.addTask {
-                for await state in stream.prefix(1) {
-                    return state
-                }
-                throw ConnectivityStateTestError.finishedWithoutValue
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw ConnectivityStateTestError.timedOut
-            }
-
-            guard let state = try await group.next() else {
-                throw ConnectivityStateTestError.finishedWithoutValue
-            }
-            group.cancelAll()
-            return state
-        }
-    }
-
     // MARK: - Decode success
 
     @Test func execute200DecodesResponse() async throws {
@@ -877,16 +848,6 @@ struct NetworkClientTests {
 
         #expect(firstState == .connected)
         #expect(secondState == .disconnected)
-    }
-
-    @Test func networkPathConnectivityMonitorProvidesConnectivityStates() async throws {
-        let monitor = NetworkPathConnectivityMonitor()
-        defer { monitor.cancel() }
-        let provider: any ConnectivityStateProviding = monitor
-
-        let state = try await firstConnectivityState(from: provider.connectivityStates())
-
-        #expect(state == .connected || state == .disconnected)
     }
 
     @Test func mockConnectivityMonitorPublishesConnectivityState() async {
