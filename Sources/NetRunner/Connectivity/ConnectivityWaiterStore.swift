@@ -12,6 +12,12 @@ final class ConnectivityWaiterStore: @unchecked Sendable {
         return isConnected
     }
 
+    var pendingWaiterCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return waiters.count
+    }
+
     func waitUntilConnected(timeout: TimeInterval?) async throws {
         try await wait(
             timeout: timeout,

@@ -37,7 +37,7 @@ struct RetryPolicyTests {
 
         #expect(policy.maxRetries == 0)
         #expect(policy.timeout == 0)
-        #expect(!policy.isEnabled)
+        #expect(policy.isEnabled == false)
     }
 
     // MARK: - delay
@@ -111,11 +111,11 @@ struct RetryPolicyTests {
         let policy = RetryPolicy.fixed(maxRetries: 1, delay: 0)
 
         #expect(policy.isRetryable(error: .timeout, method: .get))
-        #expect(!policy.isRetryable(error: .timeout, method: .post))
-        #expect(!policy.isRetryable(error: .timeout, method: nil))
-        #expect(!policy.isRetryable(
+        #expect(policy.isRetryable(error: .timeout, method: .post) == false)
+        #expect(policy.isRetryable(error: .timeout, method: nil) == false)
+        #expect(policy.isRetryable(
             error: .clientError(response: makeTestHTTPErrorResponse(statusCode: 404)),
             method: .get
-        ))
+        ) == false)
     }
 }

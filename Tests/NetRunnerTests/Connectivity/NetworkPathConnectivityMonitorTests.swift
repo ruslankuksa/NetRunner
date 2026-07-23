@@ -1,7 +1,8 @@
 import Testing
 @testable import NetRunner
 
-@Suite struct NetworkPathConnectivityMonitorTests {
+@Suite(.timeLimit(.minutes(1)), .tags(.connectivity))
+struct NetworkPathConnectivityMonitorTests {
     @Test func pathHandlerPublishesNothingBeforeEvaluatedCallback() async {
         let source = ControllableNetworkPathUpdateSource()
         let monitor = PathUpdateHandlerConnectivityMonitor(source: source)
@@ -43,6 +44,52 @@ import Testing
 
         #expect(await monitor.currentConnectivityState == .connected)
         monitor.cancel()
+    }
+
+    @Test func pathHandlerDisconnectedUpdateTimesOut() async {
+        let source = ControllableNetworkPathUpdateSource(updatesOnStart: [.disconnected])
+        let monitor = PathUpdateHandlerConnectivityMonitor(source: source)
+
+        await #expect(throws: NetworkError.noConnectivity) {
+            try await monitor.waitUntilConnected(timeout: 0)
+        }
+
+        monitor.cancel()
+    }
+
+    @Test func pathHandlerTaskCancellationCancelsPendingRestoration() async {
+        let source = ControllableNetworkPathUpdateSource()
+        let monitor = PathUpdateHandlerConnectivityMonitor(source: source)
+        let task = Task {
+            try await monitor.waitForConnectivityRestoration(timeout: nil)
+        }
+
+        while source.isStarted == false {
+            await Task.yield()
+        }
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        monitor.cancel()
+    }
+
+    @Test func pathHandlerMonitorCancellationCancelsPendingRestoration() async {
+        let source = ControllableNetworkPathUpdateSource()
+        let monitor = PathUpdateHandlerConnectivityMonitor(source: source)
+        let task = Task {
+            try await monitor.waitForConnectivityRestoration(timeout: nil)
+        }
+
+        while source.isStarted == false {
+            await Task.yield()
+        }
+        monitor.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
     }
 
     @Test func pathHandlerCancellationFinishesBothStreams() async {
@@ -117,6 +164,55 @@ import Testing
 
         #expect(await monitor.currentConnectivityState == .connected)
         monitor.cancel()
+    }
+
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    @Test func asyncSequenceDisconnectedUpdateTimesOut() async {
+        let source = ControllableNetworkPathUpdateSource(updatesOnStart: [.disconnected])
+        let monitor = AsyncSequenceNetworkPathConnectivityMonitor(source: source)
+
+        await #expect(throws: NetworkError.noConnectivity) {
+            try await monitor.waitUntilConnected(timeout: 0)
+        }
+
+        monitor.cancel()
+    }
+
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    @Test func asyncSequenceTaskCancellationCancelsPendingRestoration() async {
+        let source = ControllableNetworkPathUpdateSource()
+        let monitor = AsyncSequenceNetworkPathConnectivityMonitor(source: source)
+        let task = Task {
+            try await monitor.waitForConnectivityRestoration(timeout: nil)
+        }
+
+        while source.isStarted == false {
+            await Task.yield()
+        }
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        monitor.cancel()
+    }
+
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    @Test func asyncSequenceMonitorCancellationCancelsPendingRestoration() async {
+        let source = ControllableNetworkPathUpdateSource()
+        let monitor = AsyncSequenceNetworkPathConnectivityMonitor(source: source)
+        let task = Task {
+            try await monitor.waitForConnectivityRestoration(timeout: nil)
+        }
+
+        while source.isStarted == false {
+            await Task.yield()
+        }
+        monitor.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
     }
 
     @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)

@@ -1,10 +1,15 @@
 import Foundation
 import Testing
 
+@Suite(
+    .timeLimit(.minutes(1)),
+    .tags(.compatibility, .slow)
+)
 struct NetworkRequestSwift6ProbeTests {
 
     @Test func swift6ConsumerCanCaptureNetworkRequestInSendableRetryClosure() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -143,7 +148,12 @@ struct NetworkRequestSwift6ProbeTests {
         moduleCachePath: URL
     ) throws -> (exitCode: Int32, text: String) {
         let process = Process()
-        let output = Pipe()
+        let logURL = packagePath.appendingPathComponent("swift-build.log")
+        _ = FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let output = try FileHandle(forWritingTo: logURL)
+        defer {
+            try? output.close()
+        }
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [
             "swift",
@@ -159,8 +169,9 @@ struct NetworkRequestSwift6ProbeTests {
 
         try process.run()
         process.waitUntilExit()
+        try output.close()
 
-        let data = output.fileHandleForReading.readDataToEndOfFile()
+        let data = try Data(contentsOf: logURL)
         let text = String(data: data, encoding: .utf8) ?? ""
         return (process.terminationStatus, text)
     }

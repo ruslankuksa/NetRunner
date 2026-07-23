@@ -1,6 +1,7 @@
 import Testing
 @testable import NetRunner
 
+@Suite(.timeLimit(.minutes(1)), .tags(.connectivity))
 struct ConnectivityStateStoreTests {
     @Test func beginsWithoutCurrentStateOrUpdate() {
         let store = ConnectivityStateStore()

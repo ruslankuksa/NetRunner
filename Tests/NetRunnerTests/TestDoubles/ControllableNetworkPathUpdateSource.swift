@@ -9,6 +9,12 @@ final class ControllableNetworkPathUpdateSource: NetworkPathUpdateSource, @unche
     private var _isStarted = false
     private var _isCancelled = false
 
+    var isStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _isStarted
+    }
+
     var isCancelled: Bool {
         lock.lock()
         defer { lock.unlock() }
